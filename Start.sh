@@ -1,2 +1,2 @@
 #!/bin/bash
-nohup python3 Gallery.pyw > /dev/null 2>&1 &
+nohup python3 ImageFlow.pyw > /dev/null 2>&1 &
