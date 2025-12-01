@@ -26,7 +26,19 @@ A sleek, feature-rich image gallery application with dark mode, focus mode, and 
 **Windows & Linux:**
 ```bash
 pip install pillow natsort
-pip3 install pillow natsort
+```
+```bash
+# Debian/Ubuntu
+sudo apt-get install python3-pillow
+sudo apt-get install python3-natsort
+
+# Fedora
+sudo dnf install python3-pillow
+sudo dnf install python3-natsort
+
+# Arch
+sudo pacman -S pillow
+sudo pacman -S natsort
 ```
 
 **Linux (if tkinter is missing):**
@@ -49,8 +61,8 @@ Double-click `start.bat` to launch without a terminal window.
 ### Linux
 Run directly:
 ```bash
-chmod +x ./start.sh
-./start.sh
+chmod +x ./Start.sh
+./Start.sh
 ```
 
 ## Keyboard Shortcuts
