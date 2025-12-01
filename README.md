@@ -18,13 +18,15 @@ A sleek, feature-rich image gallery application with dark mode, focus mode, and 
 ### Requirements
 - Python 3.7+
 - Pillow (PIL)
+- Natsort
 - tkinter (included with Python on most systems)
 
 ### Setup
 
 **Windows & Linux:**
 ```bash
-pip install Pillow
+pip install pillow natsort
+pip3 install pillow natsort
 ```
 
 **Linux (if tkinter is missing):**
