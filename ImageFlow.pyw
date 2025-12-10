@@ -503,8 +503,17 @@ class ImageGallery:
         self.zoom_level = 1.0
         self.pan_x = self.pan_y = 0
         self.update_ui_state()
-        self.render()
-        self.root.after(50, lambda: self.canvas.yview_moveto(self.saved_scroll_pos))
+        
+        # Calculate layout FIRST to set scroll region
+        self.calculate_layout()
+        
+        # Restore scroll position BEFORE rendering
+        self.canvas.yview_moveto(self.saved_scroll_pos)
+        
+        # Now render - no black screen!
+        self.canvas.delete("all")
+        self.photos.clear()
+        self.render_grid()
 
     def zoom_in_fn(self):
         self.zoom_level = min(5.0, self.zoom_level + 0.25)
@@ -875,14 +884,14 @@ class ImageGallery:
             self.render_grid()
 
     def display_current_image(self):
-        """Display single image - NO SCROLLBAR like your original code"""
+        """Display single image - NO SCROLLBAR"""
         if not self.filtered_images or self.current_index >= len(self.filtered_images):
             return
         
         img_data = self.filtered_images[self.current_index]
         path = img_data['path']
         
-        # Reset scroll region - removes scrollbar!
+        # Reset scroll region
         self.canvas.config(scrollregion=(0, 0, 0, 0))
         
         # Reset canvas scroll position
