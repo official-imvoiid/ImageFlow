@@ -6,14 +6,9 @@ from collections import OrderedDict
 import threading
 from natsort import natsorted
 import queue
-import mmap
-import io
-from concurrent.futures import ThreadPoolExecutor
-import struct
 
 class FastImageCache:
-    """Ultra-fast image cache with memory-mapped files"""
-    def __init__(self, max_size=200):
+    def __init__(self, max_size=100):
         self.cache = OrderedDict()
         self.max_size = max_size
         self.lock = threading.Lock()
@@ -37,16 +32,12 @@ class ImageGallery:
         self.root.title("Image Gallery Viewer")
         self.root.geometry("1200x800")
         
-        try:
-            self.root.iconbitmap("gallery_icon.ico")
-        except:
-            pass
-        
         # Core data
         self.images = []
         self.filtered_images = []
         self.current_index = 0
         self.image_folder = ""
+        self.loading = False
         
         # View state
         self.zoom_level = 1.0
@@ -55,42 +46,33 @@ class ImageGallery:
         self.fullscreen_mode = False
         self.grid_mode = True
         self.single_view_mode = False
+        self.saved_scroll_pos = 0.0
         
         # Pan state
-        self.zoom_pan_timer = None
         self.pan_x = 0
         self.pan_y = 0
         self.pan_start_x = 0
         self.pan_start_y = 0
         
-        # Ultra-optimized caching
-        self.thumb_cache = FastImageCache(max_size=400)
-        self.img_cache = FastImageCache(max_size=30)
+        # Optimized caching
+        self.thumb_cache = FastImageCache(max_size=150)
+        self.img_cache = FastImageCache(max_size=10)
         self.aspect_cache = {}
         self.photos = []
         
-        # Layout settings
+        # Layout
         self.base_width = 200
         self.gap = 4
         self.num_columns = 4
         
         # Async operations
-        self.executor = ThreadPoolExecutor(max_workers=4)
-        self.thumb_queue = queue.Queue(maxsize=100)
+        self.thumb_queue = queue.Queue(maxsize=50)
         self.result_queue = queue.Queue()
         self.stop_workers = False
         
         # Render optimization
         self.render_id = None
-        self.scroll_id = None
         self.image_positions = {}
-        self.visible_thumbs = {}
-        
-        # Ghost arrows
-        self.ghost_arrow_left = None
-        self.ghost_arrow_right = None
-        self.ghost_timer = None
-        self.last_size = None
         
         # Colors
         self.colors = {
@@ -105,7 +87,9 @@ class ImageGallery:
         self.apply_theme()
         
         # Start workers
-        self.start_workers()
+        for _ in range(2):
+            t = threading.Thread(target=self.thumbnail_worker, daemon=True)
+            t.start()
         
         # Bindings
         self.root.bind("<Escape>", self.on_escape)
@@ -113,17 +97,9 @@ class ImageGallery:
         self.root.bind("<Left>", lambda e: self.prev_img() if self.single_view_mode else None)
         self.root.bind("<Right>", lambda e: self.next_img() if self.single_view_mode else None)
         
-        # Start result checker
         self.check_results()
 
-    def start_workers(self):
-        """Start background thumbnail workers"""
-        for _ in range(3):
-            t = threading.Thread(target=self.thumbnail_worker, daemon=True)
-            t.start()
-
     def thumbnail_worker(self):
-        """Worker thread for generating thumbnails"""
         while not self.stop_workers:
             try:
                 task = self.thumb_queue.get(timeout=0.5)
@@ -133,22 +109,17 @@ class ImageGallery:
                 path, width, priority = task
                 key = f"{path}_{width}"
                 
-                # Skip if already cached
                 if self.thumb_cache.get(key):
                     continue
                 
                 try:
-                    # Fast thumbnail generation
                     with Image.open(path) as img:
                         aspect = img.width / img.height
                         new_h = int(width / aspect)
-                        
-                        # Use NEAREST for faster processing on lower priority
-                        resample = Image.Resampling.LANCZOS if priority > 5 else Image.Resampling.BILINEAR
+                        resample = Image.Resampling.BILINEAR
                         thumb = img.resize((width, new_h), resample)
-                        
                         self.result_queue.put((key, thumb, path))
-                except Exception as e:
+                except:
                     pass
                 
                 self.thumb_queue.task_done()
@@ -156,10 +127,9 @@ class ImageGallery:
                 continue
 
     def check_results(self):
-        """Check for completed thumbnails"""
         try:
             count = 0
-            while count < 10:  # Process up to 10 per check
+            while count < 5:
                 try:
                     key, thumb, path = self.result_queue.get_nowait()
                     self.thumb_cache.put(key, thumb)
@@ -172,15 +142,13 @@ class ImageGallery:
         except:
             pass
         
-        self.root.after(50, self.check_results)
+        self.root.after(100, self.check_results)
 
     def get_aspect_ratio_fast(self, path):
-        """Ultra-fast aspect ratio without loading full image"""
         if path in self.aspect_cache:
             return self.aspect_cache[path]
         
         try:
-            # Just peek at image header
             with Image.open(path) as img:
                 ratio = img.width / img.height
             self.aspect_cache[path] = ratio
@@ -189,20 +157,16 @@ class ImageGallery:
             return 1.0
 
     def queue_thumbnail(self, path, width, priority=5):
-        """Queue thumbnail for generation"""
         try:
             self.thumb_queue.put_nowait((path, width, priority))
         except queue.Full:
             pass
 
     def get_thumbnail(self, path, width):
-        """Get thumbnail from cache or queue for generation"""
         key = f"{path}_{width}"
-        thumb = self.thumb_cache.get(key)
-        return thumb
+        return self.thumb_cache.get(key)
 
     def get_image(self, path):
-        """Get full image with caching"""
         cached = self.img_cache.get(path)
         if cached:
             return cached
@@ -215,18 +179,16 @@ class ImageGallery:
             return None
 
     def preload_adjacent(self):
-        """Preload images adjacent to current"""
         if not self.single_view_mode or not self.filtered_images:
             return
         
-        for offset in [-2, -1, 1, 2]:
+        for offset in [-1, 1]:
             idx = self.current_index + offset
             if 0 <= idx < len(self.filtered_images):
                 path = self.filtered_images[idx]['path']
                 threading.Thread(target=self._preload_single, args=(path,), daemon=True).start()
 
     def _preload_single(self, path):
-        """Preload a single image"""
         if not self.img_cache.get(path):
             try:
                 img = Image.open(path)
@@ -246,15 +208,11 @@ class ImageGallery:
 
     def on_close(self):
         self.stop_workers = True
-        
-        # Stop workers
-        for _ in range(3):
+        for _ in range(2):
             try:
                 self.thumb_queue.put(None, block=False)
             except:
                 pass
-        
-        self.executor.shutdown(wait=False)
         
         try:
             self.root.quit()
@@ -278,39 +236,39 @@ class ImageGallery:
         left.pack(side=tk.LEFT, padx=10, pady=10)
         
         tk.Button(left, text="Select Folder", command=self.select_folder, relief=tk.FLAT,
-                 padx=15, pady=10, cursor="hand2", font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=5)
+                 padx=15, pady=10, cursor="hand2", font=("Sans", 11)).pack(side=tk.LEFT, padx=5)
         
         self.deselect_btn = tk.Button(left, text="Deselect All", command=self.deselect_all, relief=tk.FLAT,
-                 padx=12, pady=10, cursor="hand2", font=("Segoe UI", 11), state=tk.DISABLED)
+                 padx=12, pady=10, cursor="hand2", font=("Sans", 11), state=tk.DISABLED)
         self.deselect_btn.pack(side=tk.LEFT, padx=5)
         
         self.back_btn = tk.Button(left, text="Back to Grid", command=self.back_to_grid,
-                                  relief=tk.FLAT, padx=12, pady=10, cursor="hand2", font=("Segoe UI", 11))
+                                  relief=tk.FLAT, padx=12, pady=10, cursor="hand2", font=("Sans", 11))
         self.back_btn.pack(side=tk.LEFT, padx=5)
         
         right = tk.Frame(self.toolbar)
         right.pack(side=tk.RIGHT, padx=10, pady=10)
         
         self.full_btn = tk.Button(right, text="Focus Mode", command=self.toggle_fullscreen,
-                                  relief=tk.FLAT, padx=12, pady=10, cursor="hand2", font=("Segoe UI", 11))
+                                  relief=tk.FLAT, padx=12, pady=10, cursor="hand2", font=("Sans", 11))
         self.full_btn.pack(side=tk.RIGHT, padx=5)
         
         self.dark_btn = tk.Button(right, text="Light Mode" if self.dark_mode else "Dark Mode", 
                                   command=self.toggle_dark, relief=tk.FLAT, padx=12, pady=10, 
-                                  cursor="hand2", font=("Segoe UI", 11))
+                                  cursor="hand2", font=("Sans", 11))
         self.dark_btn.pack(side=tk.RIGHT, padx=5)
         
         self.side_btn = tk.Button(right, text="Hide Panel", command=self.toggle_sidebar,
-                                  relief=tk.FLAT, padx=12, pady=10, cursor="hand2", font=("Segoe UI", 11))
+                                  relief=tk.FLAT, padx=12, pady=10, cursor="hand2", font=("Sans", 11))
         self.side_btn.pack(side=tk.RIGHT, padx=5)
         
         # Zoom controls
-        self.zoom_txt = tk.Label(right, text="Zoom:", font=("Segoe UI", 11))
+        self.zoom_txt = tk.Label(right, text="Zoom:", font=("Sans", 11))
         self.zoom_out = tk.Button(right, text="-", command=self.zoom_out_fn, width=3,
-                                  relief=tk.FLAT, cursor="hand2", pady=8, font=("Segoe UI", 11))
-        self.zoom_val = tk.Label(right, text="100%", width=5, font=("Segoe UI", 11))
+                                  relief=tk.FLAT, cursor="hand2", pady=8, font=("Sans", 11))
+        self.zoom_val = tk.Label(right, text="100%", width=5, font=("Sans", 11))
         self.zoom_in = tk.Button(right, text="+", command=self.zoom_in_fn, width=3,
-                                relief=tk.FLAT, cursor="hand2", pady=8, font=("Segoe UI", 11))
+                                relief=tk.FLAT, cursor="hand2", pady=8, font=("Sans", 11))
         
         # Sidebar
         self.sidebar = tk.Frame(self.main, width=280)
@@ -320,27 +278,27 @@ class ImageGallery:
         # Search
         sf = tk.Frame(self.sidebar)
         sf.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(sf, text="Search Images", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=(0,5))
+        tk.Label(sf, text="Search Images", font=("Sans", 11, "bold")).pack(anchor=tk.W, pady=(0,5))
         self.search_var = tk.StringVar()
         self.search_var.trace('w', lambda *a: self.update_view())
-        tk.Entry(sf, textvariable=self.search_var, font=("Segoe UI", 11)).pack(fill=tk.X)
+        tk.Entry(sf, textvariable=self.search_var, font=("Sans", 11)).pack(fill=tk.X)
         
         # View mode
         mf = tk.Frame(self.sidebar)
         mf.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(mf, text="View Mode", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=5)
+        tk.Label(mf, text="View Mode", font=("Sans", 11, "bold")).pack(anchor=tk.W, pady=5)
         
         self.view_mode = tk.StringVar(value="all")
         self.view_mode.trace('w', self.on_view_mode_change)
         tk.Radiobutton(mf, text="All Images", variable=self.view_mode, value="all",
-                      command=self.update_view, cursor="hand2", font=("Segoe UI", 11)).pack(anchor=tk.W, pady=2)
+                      command=self.update_view, cursor="hand2", font=("Sans", 11)).pack(anchor=tk.W, pady=2)
         tk.Radiobutton(mf, text="Selected Only", variable=self.view_mode, value="selected",
-                      command=self.update_view, cursor="hand2", font=("Segoe UI", 11)).pack(anchor=tk.W, pady=2)
+                      command=self.update_view, cursor="hand2", font=("Sans", 11)).pack(anchor=tk.W, pady=2)
         
         # Columns
         cf = tk.Frame(self.sidebar)
         cf.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(cf, text="Columns", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=5)
+        tk.Label(cf, text="Columns", font=("Sans", 11, "bold")).pack(anchor=tk.W, pady=5)
         
         col_frame = tk.Frame(cf)
         col_frame.pack(fill=tk.X)
@@ -349,12 +307,12 @@ class ImageGallery:
         self.col_radios = {}
         for i in [3, 4, 5, 6]:
             rb = tk.Radiobutton(col_frame, text=str(i), variable=self.col_var, value=i,
-                          command=self.on_column_change, cursor="hand2", font=("Segoe UI", 10))
+                          command=self.on_column_change, cursor="hand2", font=("Sans", 10))
             rb.pack(side=tk.LEFT, padx=5)
             self.col_radios[i] = rb
         
         # Image list
-        tk.Label(self.sidebar, text="Images", font=("Segoe UI", 11, "bold")).pack(padx=10, pady=5, anchor=tk.W)
+        tk.Label(self.sidebar, text="Images", font=("Sans", 11, "bold")).pack(padx=10, pady=5, anchor=tk.W)
         
         lf = tk.Frame(self.sidebar)
         lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -393,7 +351,7 @@ class ImageGallery:
         self.canvas = tk.Canvas(canvas_frame, highlightthickness=0, cursor="hand2",
                                yscrollcommand=self.scrollbar.set)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.scrollbar.config(command=self.on_scroll)
+        self.scrollbar.config(command=self.canvas.yview)
         
         self.canvas.bind("<ButtonPress-1>", self.on_click)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -401,7 +359,6 @@ class ImageGallery:
         self.canvas.bind("<Button-4>", self.on_wheel)
         self.canvas.bind("<Button-5>", self.on_wheel)
         self.canvas.bind("<Configure>", lambda e: self.schedule_render())
-        self.canvas.bind("<Double-Button-1>", lambda e: self.toggle_fullscreen())
         
         # Navigation
         self.nav_frame = tk.Frame(self.display, height=60)
@@ -409,20 +366,19 @@ class ImageGallery:
         self.nav_frame.pack_propagate(False)
         
         self.prev_btn = tk.Button(self.nav_frame, text="Previous", command=self.prev_img, padx=20, pady=8,
-                                  relief=tk.FLAT, cursor="hand2", font=("Segoe UI", 11))
+                                  relief=tk.FLAT, cursor="hand2", font=("Sans", 11))
         self.prev_btn.pack(side=tk.LEFT, padx=5)
         
-        self.info = tk.Label(self.nav_frame, text="Select a folder to begin", font=("Segoe UI", 11))
+        self.info = tk.Label(self.nav_frame, text="Select a folder to begin", font=("Sans", 11))
         self.info.pack(side=tk.LEFT, expand=True)
         
         self.next_btn = tk.Button(self.nav_frame, text="Next", command=self.next_img, padx=20, pady=8,
-                                  relief=tk.FLAT, cursor="hand2", font=("Segoe UI", 11))
+                                  relief=tk.FLAT, cursor="hand2", font=("Sans", 11))
         self.next_btn.pack(side=tk.RIGHT, padx=5)
         
         self.update_ui_state()
 
     def update_ui_state(self):
-        """Update UI element visibility"""
         if self.single_view_mode:
             self.back_btn.pack(side=tk.LEFT, padx=5)
             self.zoom_txt.pack(side=tk.RIGHT, padx=5)
@@ -455,7 +411,6 @@ class ImageGallery:
             self.deselect_btn.config(state=tk.DISABLED)
 
     def on_view_mode_change(self, *args):
-        """Handle view mode changes"""
         if self.view_mode.get() == "selected":
             selected_count = sum(1 for img in self.images if img['selected'])
             if selected_count in [1, 2, 3]:
@@ -481,64 +436,12 @@ class ImageGallery:
         self.num_columns = self.col_var.get()
         self.render()
 
-    def show_ghost_arrows(self):
-        """Show navigation arrows in fullscreen"""
-        if not self.fullscreen_mode or not self.single_view_mode or not self.filtered_images:
-            return
-        
-        if self.ghost_timer:
-            self.root.after_cancel(self.ghost_timer)
-            self.ghost_timer = None
-        
-        self.hide_ghost_arrows()
-        
-        arrow_bg = self.get_color('bg')
-        arrow_fg = self.get_color('text')
-        
-        if self.current_index > 0:
-            self.ghost_arrow_left = tk.Button(
-                self.canvas, text="<", command=self.prev_img,
-                font=("Segoe UI", 20, "bold"), bg=arrow_bg, fg=arrow_fg,
-                relief=tk.FLAT, bd=0, highlightthickness=1,
-                highlightbackground=arrow_fg, cursor="hand2", width=3, height=2
-            )
-            self.ghost_arrow_left.place(relx=0.02, rely=0.5, anchor="w")
-        
-        if self.current_index < len(self.filtered_images) - 1:
-            self.ghost_arrow_right = tk.Button(
-                self.canvas, text=">", command=self.next_img,
-                font=("Segoe UI", 20, "bold"), bg=arrow_bg, fg=arrow_fg,
-                relief=tk.FLAT, bd=0, highlightthickness=1,
-                highlightbackground=arrow_fg, cursor="hand2", width=3, height=2
-            )
-            self.ghost_arrow_right.place(relx=0.98, rely=0.5, anchor="e")
-        
-        self.ghost_timer = self.root.after(3000, self.hide_ghost_arrows)
-
-    def hide_ghost_arrows(self):
-        """Hide navigation arrows"""
-        if self.ghost_arrow_left:
-            self.ghost_arrow_left.destroy()
-            self.ghost_arrow_left = None
-        if self.ghost_arrow_right:
-            self.ghost_arrow_right.destroy()
-            self.ghost_arrow_right = None
-        if self.ghost_timer:
-            self.root.after_cancel(self.ghost_timer)
-            self.ghost_timer = None
-
-    def on_scroll(self, *args):
-        self.canvas.yview(*args)
-        self.schedule_render()
-
     def schedule_render(self):
-        """Debounced render scheduling"""
-        if self.scroll_id:
-            self.root.after_cancel(self.scroll_id)
-        self.scroll_id = self.root.after(30, self.render)
+        if self.render_id:
+            self.root.after_cancel(self.render_id)
+        self.render_id = self.root.after(50, self.render)
 
     def on_wheel(self, event):
-        """Mouse wheel handler"""
         delta = 0
         if hasattr(event, 'delta'):
             delta = event.delta
@@ -557,133 +460,33 @@ class ImageGallery:
             self.schedule_render()
 
     def on_click(self, event):
-        """Canvas click handler"""
         if self.grid_mode:
             self.handle_grid_click(event)
-        elif self.single_view_mode:
-            if self.zoom_level > 1.0:
-                self.pan_start_x = event.x
-                self.pan_start_y = event.y
-            elif self.fullscreen_mode:
-                self.show_ghost_arrows()
+        elif self.single_view_mode and self.zoom_level > 1.0:
+            self.pan_start_x = event.x
+            self.pan_start_y = event.y
 
     def on_drag(self, event):
-        """Drag handler for panning"""
         if self.single_view_mode and self.zoom_level > 1.0:
             self.pan_x += event.x - self.pan_start_x
             self.pan_y += event.y - self.pan_start_y
             self.pan_start_x = event.x
             self.pan_start_y = event.y
-            self.debounced_display()
-            
-    def debounced_display(self):
-        """Debounce display updates to prevent flickering"""
-        if self.zoom_pan_timer:
-            self.root.after_cancel(self.zoom_pan_timer)
-        
-        # Only move existing image, never clear during pan/zoom
-        self.instant_transform()
-        
-        # Schedule full quality render only after 150ms of no movement
-        self.zoom_pan_timer = self.root.after(150, self.render_high_quality)
-        
-    def instant_transform(self):
-        """Instant pan/zoom transform - ZERO canvas operations, just move existing image"""
-        if not self.single_view_mode:
-            return
-        
-        try:
-            cw = max(self.canvas.winfo_width(), 100)
-            ch = max(self.canvas.winfo_height(), 100)
-            
-            x = cw // 2 + self.pan_x
-            y = ch // 2 + self.pan_y
-            
-            # Just move the existing image - NO delete, NO create
-            items = self.canvas.find_all()
-            if items:
-                self.canvas.coords(items[0], x, y)
-        except:
-            pass
+            self.render()
 
-    def render_high_quality(self):
-        """Render high quality image only after movement stops - prevents unnecessary work"""
-        if not self.filtered_images or self.current_index >= len(self.filtered_images):
-            return
-        
-        img_data = self.filtered_images[self.current_index]
-        path = img_data['path']
-        
-        # Get image
-        img = self.get_image(path)
-        if not img:
-            return
-        
-        self.root.update_idletasks()
-        
-        cw = max(self.canvas.winfo_width(), 100)
-        ch = max(self.canvas.winfo_height(), 100)
-        iw, ih = img.size
-        
-        # Calculate scaled size
-        scale = min(cw / iw, ch / ih) * self.zoom_level
-        new_w = max(1, int(iw * scale))
-        new_h = max(1, int(ih * scale))
-        
-        # Check if we actually need to resize (avoid unnecessary work)
-        if self.photos and hasattr(self, 'last_size'):
-            if self.last_size == (new_w, new_h, path):
-                # Same size and image, just reposition
-                self.instant_transform()
-                return
-        
-        # Store last size
-        self.last_size = (new_w, new_h, path)
-        
-        # Resize
-        resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        new_photo = ImageTk.PhotoImage(resized)
-        
-        # Atomic swap: create new image at same position as old, then delete old
-        x = cw // 2 + self.pan_x
-        y = ch // 2 + self.pan_y
-        
-        # Create new first, delete old second - single frame update
-        old_items = self.canvas.find_all()
-        new_item = self.canvas.create_image(x, y, anchor=tk.CENTER, image=new_photo)
-        for item in old_items:
-            self.canvas.delete(item)
-        
-        # Update photo reference
-        self.photos.clear()
-        self.photos.append(new_photo)
-        
-        # Update info
-        self.info.config(text=f"{self.current_index + 1} / {len(self.filtered_images)} - {img_data['name']}")
-        
-        # Preload adjacent
-        self.preload_adjacent()
-
-    # --- FIX APPLIED HERE ---
     def handle_grid_click(self, event):
-        """Handle click on grid image, converting window to canvas coordinates."""
-        
-        # Convert window coordinates (event.x, event.y) to canvas coordinates
         click_x = self.canvas.canvasx(event.x)
         click_y = self.canvas.canvasy(event.y)
         
-        # Find clicked image
         for path, (x, y, w, h) in self.image_positions.items():
             if x <= click_x <= x + w and y <= click_y <= y + h:
-                # Find the corresponding image data
                 img_data = next((img for img in self.filtered_images if img['path'] == path), None)
                 if img_data:
+                    self.saved_scroll_pos = self.canvas.yview()[0]
                     self.show_single_img(img_data)
                     return
-    # --------------------------
 
     def show_single_img(self, img_data):
-        """Display single image"""
         if img_data in self.filtered_images:
             self.current_index = self.filtered_images.index(img_data)
             self.single_view_mode = True
@@ -695,19 +498,18 @@ class ImageGallery:
             self.display_current_image()
 
     def back_to_grid(self):
-        """Return to grid view"""
         self.single_view_mode = False
         self.grid_mode = True
         self.zoom_level = 1.0
         self.pan_x = self.pan_y = 0
-        self.hide_ghost_arrows()
         self.update_ui_state()
         self.render()
+        self.root.after(50, lambda: self.canvas.yview_moveto(self.saved_scroll_pos))
 
     def zoom_in_fn(self):
         self.zoom_level = min(5.0, self.zoom_level + 0.25)
         self.zoom_val.config(text=f"{int(self.zoom_level * 100)}%")
-        self.debounced_display()
+        self.render()
 
     def zoom_out_fn(self):
         self.zoom_level = max(0.25, self.zoom_level - 0.25)
@@ -715,10 +517,9 @@ class ImageGallery:
         if self.zoom_level <= 1.0:
             self.pan_x = 0
             self.pan_y = 0
-        self.debounced_display()
+        self.render()
     
     def apply_theme(self):
-        """Apply color theme"""
         bg = self.get_color('bg')
         sb = self.get_color('sidebar')
         hd = self.get_color('header')
@@ -754,7 +555,6 @@ class ImageGallery:
         self.prev_btn.configure(bg=btn, fg=btn_txt, activebackground=btn, activeforeground=btn_txt)
         self.next_btn.configure(bg=btn, fg=btn_txt, activebackground=btn, activeforeground=btn_txt)
         
-        # Treeview theme
         style = ttk.Style()
         if self.dark_mode:
             style.theme_use('default')
@@ -762,22 +562,18 @@ class ImageGallery:
                           fieldbackground="#2d2d30", rowheight=25, borderwidth=0)
             style.map('Treeview', background=[('selected', '#0078d4')])
             style.configure("Treeview.Heading", background="#3d3d40", foreground="#e0e0e0", relief="flat")
-            style.map("Treeview.Heading", background=[('active', '#4d4d50')])
         else:
             style.theme_use('default')
             style.configure("Treeview", background="#ffffff", foreground="#000000",
                           fieldbackground="#ffffff", rowheight=25, borderwidth=0)
             style.map('Treeview', background=[('selected', '#0078d4')])
             style.configure("Treeview.Heading", background="#e8e8e8", foreground="#000000", relief="flat")
-            style.map("Treeview.Heading", background=[('active', '#d8d8d8')])
 
     def _apply_sidebar_theme(self, bg, fg):
-        """Apply theme to sidebar recursively"""
         for child in self.sidebar.winfo_children():
             self._apply_theme_recursive(child, bg, fg)
 
     def _apply_theme_recursive(self, widget, bg, fg):
-        """Recursively apply theme to widget and children"""
         try:
             if isinstance(widget, (tk.Frame, tk.Label)):
                 if isinstance(widget, tk.Label):
@@ -787,21 +583,13 @@ class ImageGallery:
             elif isinstance(widget, tk.Entry):
                 entry_bg = '#3d3d40' if self.dark_mode else '#ffffff'
                 entry_fg = '#e0e0e0' if self.dark_mode else '#000000'
-                widget.configure(bg=entry_bg, fg=entry_fg, 
-                               insertbackground=entry_fg,
-                               selectbackground='#0078d4',
-                               selectforeground='#ffffff')
+                widget.configure(bg=entry_bg, fg=entry_fg, insertbackground=entry_fg)
             elif isinstance(widget, tk.Radiobutton):
-                widget.configure(bg=bg, fg=fg, selectcolor=bg, 
-                               activebackground=bg, activeforeground=fg)
+                widget.configure(bg=bg, fg=fg, selectcolor=bg, activebackground=bg, activeforeground=fg)
             elif isinstance(widget, tk.Button):
                 btn_bg = self.get_color('button')
                 btn_fg = self.get_color('btn_txt')
-                widget.configure(bg=btn_bg, fg=btn_fg, 
-                               activebackground=btn_bg, activeforeground=btn_fg)
-            elif isinstance(widget, tk.Scrollbar):
-                widget.configure(bg=bg, troughcolor=bg,
-                               activebackground=bg if self.dark_mode else '#e0e0e0')
+                widget.configure(bg=btn_bg, fg=btn_fg, activebackground=btn_bg, activeforeground=btn_fg)
         except:
             pass
         
@@ -839,8 +627,6 @@ class ImageGallery:
         self.nav_frame.pack_forget()
         self.full_btn.config(text="Exit Focus")
         self.render()
-        if self.single_view_mode:
-            self.show_ghost_arrows()
 
     def exit_fullscreen(self):
         self.fullscreen_mode = False
@@ -850,84 +636,61 @@ class ImageGallery:
             self.sidebar.pack(side=tk.LEFT, fill=tk.Y, in_=self.main, before=self.display)
         self.nav_frame.pack(fill=tk.X, padx=10, pady=10)
         self.full_btn.config(text="Focus Mode")
-        self.hide_ghost_arrows()
         self.render()
 
     def select_folder(self):
+        if self.loading:
+            return
         folder = filedialog.askdirectory(title="Select Image Folder")
         if folder:
             self.image_folder = folder
-            self.load_images()
+            self.load_images_async()
 
-    def load_images(self):
-        """Ultra-fast image loading - instant folder scan"""
-        self.images.clear()
-        self.filtered_images.clear()
-        self.aspect_cache.clear()
-        self.image_positions.clear()
-        
-        # Clear tree
-        self.tree.delete(*self.tree.get_children())
-        
-        exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff'}
-        
-        self.info.config(text="Scanning folder...")
+    def load_images_async(self):
+        self.loading = True
+        self.info.config(text="Scanning...")
         self.root.update_idletasks()
-        
-        # Ultra-fast OS directory scan
+        threading.Thread(target=self._scan_folder_thread, daemon=True).start()
+
+    def _scan_folder_thread(self):
+        exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff'}
         files = []
+        
         try:
             with os.scandir(self.image_folder) as entries:
                 for entry in entries:
                     if entry.is_file():
                         ext = os.path.splitext(entry.name)[1].lower()
                         if ext in exts:
-                            files.append({
-                                'name': entry.name, 
-                                'path': entry.path, 
-                                'selected': False
-                            })
+                            files.append({'name': entry.name, 'path': entry.path, 'selected': False})
         except Exception as e:
-            self.info.config(text=f"Error: {e}")
+            self.root.after(0, lambda: self.info.config(text=f"Error: {e}"))
+            self.loading = False
             return
         
-        # Natural sort
         files = natsorted(files, key=lambda x: x['name'])
+        self.root.after(0, lambda: self._finish_loading(files))
+
+    def _finish_loading(self, files):
         self.images = files
+        self.filtered_images.clear()
+        self.aspect_cache.clear()
+        self.image_positions.clear()
+        self.tree.delete(*self.tree.get_children())
         
-        # Instant tree population (show loading indicator)
         self.info.config(text=f"Loaded {len(self.images)} images")
         
-        # Populate tree asynchronously
-        self.populate_tree_async()
+        for i, img in enumerate(self.images, 1):
+            sel = "✓" if img['selected'] else ""
+            self.tree.insert('', 'end', values=(str(i), sel, img['name']))
         
+        self.loading = False
         self.update_view()
 
-    def populate_tree_async(self):
-        """Populate tree view asynchronously for instant feel"""
-        batch = 200
-        
-        def add_items(start):
-            end = min(start + batch, len(self.images))
-            items = []
-            
-            for i in range(start, end):
-                img = self.images[i]
-                sel = "✓" if img['selected'] else ""
-                items.append((str(i + 1), sel, img['name']))
-            
-            # Batch insert
-            for vals in items:
-                self.tree.insert('', 'end', values=vals)
-            
-            if end < len(self.images):
-                self.root.after(1, lambda: add_items(end))
-        
-        if self.images:
-            add_items(0)
-
     def update_view(self):
-        """Update filtered view"""
+        if self.loading:
+            return
+            
         search = self.search_var.get().lower()
         mode = self.view_mode.get()
         
@@ -940,14 +703,12 @@ class ImageGallery:
             if matches_search and matches_mode:
                 self.filtered_images.append(img)
         
-        # Update tree
         self.tree.delete(*self.tree.get_children())
         
         for idx, img in enumerate(self.filtered_images, 1):
             sel = "✓" if img['selected'] else ""
             self.tree.insert('', 'end', values=(str(idx), sel, img['name']))
         
-        # Handle selection mode
         if mode == "selected":
             count = len(self.filtered_images)
             
@@ -970,7 +731,6 @@ class ImageGallery:
         self.render()
 
     def on_tree_click(self, event):
-        """Tree click handler for selection"""
         region = self.tree.identify_region(event.x, event.y)
         item = self.tree.identify_row(event.y)
         
@@ -978,43 +738,35 @@ class ImageGallery:
             column = self.tree.identify_column(event.x)
             values = self.tree.item(item, 'values')
             
-            if column == '#2':  # Selection column
+            if column == '#2':
                 idx = int(values[0]) - 1
                 if 0 <= idx < len(self.filtered_images):
                     img_data = self.filtered_images[idx]
                     img_data['selected'] = not img_data['selected']
                     
-                    # Update main list
                     for img in self.images:
                         if img['path'] == img_data['path']:
                             img['selected'] = img_data['selected']
                             break
                     
-                    # Update display
                     sel = "✓" if img_data['selected'] else ""
                     self.tree.item(item, values=(values[0], sel, values[2]))
-                    
                     self.update_view()
 
-    # --- FIX APPLIED HERE ---
     def on_tree_dbl(self, event):
-        """Tree double-click handler"""
         item = self.tree.identify_row(event.y)
         if item:
             values = self.tree.item(item, 'values')
             if values:
-                # The index in filtered_images is values[0] - 1
                 try:
                     idx = int(values[0]) - 1
                     if 0 <= idx < len(self.filtered_images):
+                        self.saved_scroll_pos = self.canvas.yview()[0]
                         self.show_single_img(self.filtered_images[idx])
                 except ValueError:
-                    # Should not happen if populate_tree_async works correctly
                     pass
-    # --------------------------
 
     def deselect_all(self):
-        """Deselect all images"""
         for img in self.images:
             img['selected'] = False
         
@@ -1026,38 +778,27 @@ class ImageGallery:
         self.update_view()
 
     def render(self):
-        """Main render dispatcher"""
         if self.single_view_mode:
-            self.show_single()
+            self.display_current_image()
             return
         
         self.canvas.delete("all")
         self.photos.clear()
-        self.image_positions.clear()
         
         if not self.filtered_images:
-            self.canvas.create_text(
-                self.canvas.winfo_width() // 2, 
-                self.canvas.winfo_height() // 2,
-                text="No images to display\nSelect a folder to begin",
-                font=("Segoe UI", 14),
-                fill=self.get_color('text'),
-                justify=tk.CENTER
-            )
-            self.canvas.config(scrollregion=(0, 0, self.canvas.winfo_width(), self.canvas.winfo_height()))
+            self.canvas.create_text(self.canvas.winfo_width() // 2, self.canvas.winfo_height() // 2,
+                text="No images\nSelect a folder", font=("Sans", 14), fill=self.get_color('text'), justify=tk.CENTER)
             return
         
         self.calculate_layout()
-        self.update_visible_thumbs()
+        self.render_grid()
 
     def calculate_layout(self):
-        """Calculate masonry layout positions (fast, no image loading)"""
         canvas_width = self.canvas.winfo_width()
         if canvas_width <= 1:
-            self.root.after(50, self.calculate_layout)
+            self.root.after(100, self.calculate_layout)
             return
         
-        # Determine columns
         if self.view_mode.get() == "selected":
             count = len(self.filtered_images)
             if count == 2:
@@ -1070,69 +811,44 @@ class ImageGallery:
             cols = self.num_columns if self.num_columns > 0 else 4
         
         gap = self.gap
-        # Ensure column width calculation is safe
         if cols == 0:
-            cols = 1 # Fallback to a single column if somehow 0
+            cols = 1
         col_w = (canvas_width - (gap * (cols + 1))) // cols
         col_w = max(50, col_w)
         
-        # Calculate positions
         col_heights = [gap] * cols
-        
-        self.image_positions.clear() # Clear positions before recalculating
+        self.image_positions.clear()
         
         for img in self.filtered_images:
             path = img['path']
-            
-            # Find shortest column
             min_col = col_heights.index(min(col_heights))
-            
-            # Get aspect ratio
             aspect = self.get_aspect_ratio_fast(path)
             img_h = int(col_w / aspect)
-            
-            # Position
             x = gap + min_col * (col_w + gap)
             y = col_heights[min_col]
-            
             self.image_positions[path] = (x, y, col_w, img_h)
             col_heights[min_col] = y + img_h + gap
         
-        # Set scroll region
         total_h = max(col_heights) + gap if col_heights else 0
         self.canvas.config(scrollregion=(0, 0, canvas_width, total_h))
 
-    # --- FIX APPLIED HERE ---
-    def update_visible_thumbs(self):
-        """Render only visible thumbnails"""
+    def render_grid(self):
         canvas_h = self.canvas.winfo_height()
-        
-        # Get canvas scroll region total height
         sr = self.canvas.cget("scrollregion")
-        if not sr: # Check if scrollregion is set
+        if not sr:
             total_h = canvas_h 
         else:
             sr_parts = sr.split()
             total_h = int(float(sr_parts[3])) if len(sr_parts) >= 4 else canvas_h
 
-        # Get vertical scroll fraction
         st_fraction = self.canvas.yview()[0]
+        visible_top = st_fraction * total_h - 400
+        visible_bottom = visible_top + canvas_h + 800
         
-        # Calculate visible area in canvas coordinates
-        visible_top = st_fraction * total_h
-        visible_bottom = visible_top + canvas_h + 600 # Add buffer (300 above, 300 below)
-        visible_top -= 300
-        
-        # Clear canvas
-        self.canvas.delete("all")
-        self.photos.clear()
-        
-        # Render visible items
         for path, (x, y, w, h) in self.image_positions.items():
             if y + h < visible_top or y > visible_bottom:
                 continue
             
-            # Try to get cached thumbnail
             thumb = self.get_thumbnail(path, w)
             
             if thumb:
@@ -1140,108 +856,80 @@ class ImageGallery:
                     photo = ImageTk.PhotoImage(thumb)
                     self.photos.append(photo)
                     
-                    # Highlight if selected
                     img_data = next((img for img in self.filtered_images if img['path'] == path), None)
                     if img_data and img_data['selected']:
-                        self.canvas.create_rectangle(x-2, y-2, x+w+2, y+h+2, 
-                                                   outline="#0078d4", width=3)
+                        self.canvas.create_rectangle(x-2, y-2, x+w+2, y+h+2, outline="#0078d4", width=3)
                     
                     self.canvas.create_image(x, y, anchor=tk.NW, image=photo)
                 except:
                     pass
             else:
-                # Placeholder
                 self.canvas.create_rectangle(x, y, x+w, y+h, 
-                                           fill=self.get_color('sidebar'), 
-                                           outline=self.get_color('text'))
-                # Queue for loading
-                # Priority: 10 for currently visible area, 5 for buffer
-                priority = 10 if (visible_top + 300) <= y <= (visible_bottom - 300) else 5
+                                            fill=self.get_color('sidebar'), 
+                                            outline=self.get_color('text'))
+                priority = 10 if (visible_top + 400) <= y <= (visible_bottom - 400) else 5
                 self.queue_thumbnail(path, w, priority)
-    # --------------------------
 
-    def show_single(self):
-        """Show single image view"""
-        if not self.filtered_images:
-            return
-    
-        # Reset scrollbar for single view
-        self.canvas.yview_moveto(0)
-    
-        self.display_current_image()
+    def update_visible_thumbs(self):
+        if self.grid_mode:
+            self.render_grid()
 
     def display_current_image(self):
-        """Initial display of current image when switching images"""
+        """Display single image - NO SCROLLBAR like your original code"""
         if not self.filtered_images or self.current_index >= len(self.filtered_images):
             return
         
         img_data = self.filtered_images[self.current_index]
         path = img_data['path']
         
-        # Reset scroll region
+        # Reset scroll region - removes scrollbar!
         self.canvas.config(scrollregion=(0, 0, 0, 0))
         
-        # Clear canvas for new image
+        # Reset canvas scroll position
+        self.canvas.yview_moveto(0)
+        
         self.canvas.delete("all")
         self.photos.clear()
         
-        # Get image
         img = self.get_image(path)
         if not img:
+            self.info.config(text="Error loading image")
             return
         
         self.root.update_idletasks()
-        
         cw = max(self.canvas.winfo_width(), 100)
         ch = max(self.canvas.winfo_height(), 100)
         iw, ih = img.size
         
-        # Calculate scaled size
         scale = min(cw / iw, ch / ih) * self.zoom_level
         new_w = max(1, int(iw * scale))
         new_h = max(1, int(ih * scale))
         
-        # Store size for future comparison
-        self.last_size = (new_w, new_h, path)
-        
-        # Resize
-        resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
         photo = ImageTk.PhotoImage(resized)
         self.photos.append(photo)
         
-        # Center
         x = cw // 2 + self.pan_x
         y = ch // 2 + self.pan_y
-        
         self.canvas.create_image(x, y, anchor=tk.CENTER, image=photo)
-        
-        # Update info
         self.info.config(text=f"{self.current_index + 1} / {len(self.filtered_images)} - {img_data['name']}")
-        
-        # Preload adjacent
         self.preload_adjacent()
 
     def prev_img(self):
-        """Previous image"""
         if self.filtered_images and self.current_index > 0:
             self.current_index -= 1
             self.pan_x = self.pan_y = 0
-            self.zoom_level = 1.0 # Reset zoom on image change
+            self.zoom_level = 1.0
             self.zoom_val.config(text="100%")
             self.display_current_image()
-            if self.fullscreen_mode:
-                self.show_ghost_arrows()
 
     def next_img(self):
-        """Next image"""
         if self.filtered_images and self.current_index < len(self.filtered_images) - 1:
             self.current_index += 1
             self.pan_x = self.pan_y = 0
-            self.zoom_level = 1.0 # Reset zoom on image change
+            self.zoom_level = 1.0
             self.zoom_val.config(text="100%")
             self.display_current_image()
-            if self.fullscreen_mode:
-                self.show_ghost_arrows()
 
 def main():
     root = tk.Tk()
