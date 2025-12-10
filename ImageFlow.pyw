@@ -54,6 +54,9 @@ class ImageGallery:
         self.pan_start_x = 0
         self.pan_start_y = 0
         
+        # Canvas image tracking for smooth updates
+        self.canvas_image_id = None
+        
         # Optimized caching
         self.thumb_cache = FastImageCache(max_size=150)
         self.img_cache = FastImageCache(max_size=10)
@@ -488,6 +491,7 @@ class ImageGallery:
 
     def show_single_img(self, img_data):
         if img_data in self.filtered_images:
+            self.canvas_image_id = None
             self.current_index = self.filtered_images.index(img_data)
             self.single_view_mode = True
             self.grid_mode = False
@@ -504,13 +508,10 @@ class ImageGallery:
         self.pan_x = self.pan_y = 0
         self.update_ui_state()
         
-        # Calculate layout FIRST to set scroll region
+        # Set scroll region before rendering to prevent black screen
         self.calculate_layout()
-        
-        # Restore scroll position BEFORE rendering
         self.canvas.yview_moveto(self.saved_scroll_pos)
         
-        # Now render - no black screen!
         self.canvas.delete("all")
         self.photos.clear()
         self.render_grid()
@@ -884,21 +885,14 @@ class ImageGallery:
             self.render_grid()
 
     def display_current_image(self):
-        """Display single image - NO SCROLLBAR"""
         if not self.filtered_images or self.current_index >= len(self.filtered_images):
             return
         
         img_data = self.filtered_images[self.current_index]
         path = img_data['path']
         
-        # Reset scroll region
-        self.canvas.config(scrollregion=(0, 0, 0, 0))
-        
-        # Reset canvas scroll position
+        self.canvas.config(scrollregion=(0, 0, 1, 1))
         self.canvas.yview_moveto(0)
-        
-        self.canvas.delete("all")
-        self.photos.clear()
         
         img = self.get_image(path)
         if not img:
@@ -916,11 +910,20 @@ class ImageGallery:
         
         resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
         photo = ImageTk.PhotoImage(resized)
+        self.photos.clear()
         self.photos.append(photo)
         
         x = cw // 2 + self.pan_x
         y = ch // 2 + self.pan_y
-        self.canvas.create_image(x, y, anchor=tk.CENTER, image=photo)
+        
+        # Update existing image instead of recreating (prevents flicker)
+        if self.canvas_image_id is None:
+            self.canvas.delete("all")
+            self.canvas_image_id = self.canvas.create_image(x, y, anchor=tk.CENTER, image=photo)
+        else:
+            self.canvas.coords(self.canvas_image_id, x, y)
+            self.canvas.itemconfig(self.canvas_image_id, image=photo)
+        
         self.info.config(text=f"{self.current_index + 1} / {len(self.filtered_images)} - {img_data['name']}")
         self.preload_adjacent()
 
@@ -930,6 +933,7 @@ class ImageGallery:
             self.pan_x = self.pan_y = 0
             self.zoom_level = 1.0
             self.zoom_val.config(text="100%")
+            self.canvas_image_id = None
             self.display_current_image()
 
     def next_img(self):
@@ -938,6 +942,7 @@ class ImageGallery:
             self.pan_x = self.pan_y = 0
             self.zoom_level = 1.0
             self.zoom_val.config(text="100%")
+            self.canvas_image_id = None
             self.display_current_image()
 
 def main():
