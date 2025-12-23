@@ -6,6 +6,8 @@ from collections import OrderedDict
 import threading
 from natsort import natsorted
 import queue
+import sys
+import argparse
 
 class FastImageCache:
     def __init__(self, max_size=100):
@@ -27,10 +29,13 @@ class FastImageCache:
                 self.cache.popitem(last=False)
 
 class ImageGallery:
-    def __init__(self, root):
+    def __init__(self, root, cli_args=None):
         self.root = root
         self.root.title("Image Gallery Viewer")
         self.root.geometry("1200x800")
+        
+        # CLI arguments
+        self.cli_args = cli_args
         
         # Core data
         self.images = []
@@ -56,6 +61,11 @@ class ImageGallery:
         
         # Canvas image tracking for smooth updates
         self.canvas_image_id = None
+        
+        # Ghost arrow state
+        self.ghost_left_arrow = None
+        self.ghost_right_arrow = None
+        self.arrow_fade_timer = None
         
         # Optimized caching
         self.thumb_cache = FastImageCache(max_size=150)
@@ -101,6 +111,81 @@ class ImageGallery:
         self.root.bind("<Right>", lambda e: self.next_img() if self.single_view_mode else None)
         
         self.check_results()
+        
+        # Process CLI arguments
+        if self.cli_args:
+            self.root.after(100, self.process_cli_args)
+
+    def process_cli_args(self):
+        """Process command line arguments"""
+        if self.cli_args.image:
+            image_path = os.path.abspath(self.cli_args.image)
+            if os.path.isfile(image_path):
+                folder_path = os.path.dirname(image_path)
+                self.image_folder = folder_path
+                self.load_images_async()
+                self.root.after(500, lambda: self.jump_to_image(image_path))
+        elif self.cli_args.folder:
+            folder_path = os.path.abspath(self.cli_args.folder)
+            if os.path.isdir(folder_path):
+                self.image_folder = folder_path
+                self.load_images_async()
+                if self.cli_args.txt:
+                    self.root.after(500, lambda: self.select_from_txt(self.cli_args.txt))
+        elif self.cli_args.txt:
+            txt_path = os.path.abspath(self.cli_args.txt)
+            if os.path.isfile(txt_path):
+                folder_path = os.path.dirname(txt_path)
+                self.image_folder = folder_path
+                self.load_images_async()
+                self.root.after(500, lambda: self.select_from_txt(self.cli_args.txt))
+
+    def jump_to_image(self, image_path):
+        """Jump to a specific image and show it"""
+        for idx, img in enumerate(self.filtered_images):
+            if img['path'] == image_path:
+                self.show_single_img(img)
+                return
+
+    def select_from_txt(self, txt_file):
+        """Select images from text file"""
+        txt_path = os.path.abspath(txt_file)
+        if not os.path.isfile(txt_path):
+            return
+        try:
+            with open(txt_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            image_names = set()
+            if ',' in content:
+                parts = content.split(',')
+                for part in parts:
+                    name = part.strip()
+                    if name:
+                        image_names.add(name)
+            else:
+                lines = content.split('\n')
+                for line in lines:
+                    name = line.strip()
+                    if name:
+                        image_names.add(name)
+            selected_count = 0
+            for img in self.images:
+                img_name = os.path.basename(img['path'])
+                if img_name in image_names:
+                    img['selected'] = True
+                    selected_count += 1
+            for item in self.tree.get_children():
+                values = self.tree.item(item, 'values')
+                idx = int(values[0]) - 1
+                if 0 <= idx < len(self.filtered_images):
+                    img_data = self.filtered_images[idx]
+                    sel = "✓" if img_data['selected'] else ""
+                    self.tree.item(item, values=(values[0], sel, values[2]))
+            if selected_count > 0:
+                self.view_mode.set("selected")
+                self.update_view()
+        except Exception as e:
+            pass
 
     def thumbnail_worker(self):
         while not self.stop_workers:
@@ -362,6 +447,7 @@ class ImageGallery:
         self.canvas.bind("<Button-4>", self.on_wheel)
         self.canvas.bind("<Button-5>", self.on_wheel)
         self.canvas.bind("<Configure>", lambda e: self.schedule_render())
+        self.canvas.bind("<Motion>", self.on_canvas_motion)
         
         # Navigation
         self.nav_frame = tk.Frame(self.display, height=60)
@@ -380,6 +466,95 @@ class ImageGallery:
         self.next_btn.pack(side=tk.RIGHT, padx=5)
         
         self.update_ui_state()
+
+
+    def on_canvas_motion(self, event):
+        """Handle mouse motion for ghost arrows ONLY in focus mode"""
+        if not (self.fullscreen_mode and self.single_view_mode):
+            self.hide_ghost_arrows()
+            return
+        
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        left_zone = canvas_width * 0.15
+        right_zone = canvas_width * 0.85
+        
+        show_left = event.x < left_zone and self.current_index > 0
+        show_right = event.x > right_zone and self.current_index < len(self.filtered_images) - 1
+        
+        if show_left or show_right:
+            self.show_ghost_arrows(show_left, show_right, canvas_width, canvas_height)
+            if self.arrow_fade_timer:
+                self.root.after_cancel(self.arrow_fade_timer)
+            self.arrow_fade_timer = self.root.after(1500, self.hide_ghost_arrows)
+        else:
+            self.hide_ghost_arrows()
+
+    def show_ghost_arrows(self, show_left, show_right, canvas_width, canvas_height):
+        """Display rectangle ghost navigation arrows"""
+        center_y = canvas_height // 2
+        
+        if show_left and not self.ghost_left_arrow:
+            arrow_x = 50
+            arrow_y = center_y
+            self.ghost_left_arrow = []
+            
+            # Rectangle button background
+            rect = self.canvas.create_rectangle(
+                arrow_x - 35, arrow_y - 50,
+                arrow_x + 35, arrow_y + 50,
+                fill='#0078d4', outline='#005a9e', width=3, stipple='gray50'
+            )
+            self.ghost_left_arrow.append(rect)
+            
+            # Left arrow polygon
+            arrow = self.canvas.create_polygon(
+                arrow_x + 15, arrow_y - 30,
+                arrow_x - 15, arrow_y,
+                arrow_x + 15, arrow_y + 30,
+                fill='#ffffff', outline='', smooth=False
+            )
+            self.ghost_left_arrow.append(arrow)
+            
+            for item in self.ghost_left_arrow:
+                self.canvas.tag_bind(item, '<Button-1>', lambda e: self.prev_img())
+        
+        if show_right and not self.ghost_right_arrow:
+            arrow_x = canvas_width - 50
+            arrow_y = center_y
+            self.ghost_right_arrow = []
+            
+            # Rectangle button background
+            rect = self.canvas.create_rectangle(
+                arrow_x - 35, arrow_y - 50,
+                arrow_x + 35, arrow_y + 50,
+                fill='#0078d4', outline='#005a9e', width=3, stipple='gray50'
+            )
+            self.ghost_right_arrow.append(rect)
+            
+            # Right arrow polygon
+            arrow = self.canvas.create_polygon(
+                arrow_x - 15, arrow_y - 30,
+                arrow_x + 15, arrow_y,
+                arrow_x - 15, arrow_y + 30,
+                fill='#ffffff', outline='', smooth=False
+            )
+            self.ghost_right_arrow.append(arrow)
+            
+            for item in self.ghost_right_arrow:
+                self.canvas.tag_bind(item, '<Button-1>', lambda e: self.next_img())
+
+    def hide_ghost_arrows(self):
+        """Hide ghost arrows"""
+        if self.ghost_left_arrow:
+            for item in self.ghost_left_arrow:
+                self.canvas.delete(item)
+            self.ghost_left_arrow = None
+        if self.ghost_right_arrow:
+            for item in self.ghost_right_arrow:
+                self.canvas.delete(item)
+            self.ghost_right_arrow = None
 
     def update_ui_state(self):
         if self.single_view_mode:
@@ -646,6 +821,7 @@ class ImageGallery:
             self.sidebar.pack(side=tk.LEFT, fill=tk.Y, in_=self.main, before=self.display)
         self.nav_frame.pack(fill=tk.X, padx=10, pady=10)
         self.full_btn.config(text="Focus Mode")
+        self.hide_ghost_arrows()
         self.render()
 
     def select_folder(self):
@@ -934,6 +1110,7 @@ class ImageGallery:
             self.zoom_level = 1.0
             self.zoom_val.config(text="100%")
             self.canvas_image_id = None
+            self.hide_ghost_arrows()
             self.display_current_image()
 
     def next_img(self):
@@ -943,11 +1120,25 @@ class ImageGallery:
             self.zoom_level = 1.0
             self.zoom_val.config(text="100%")
             self.canvas_image_id = None
+            self.hide_ghost_arrows()
             self.display_current_image()
 
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='ImageFlow - Fast Image Viewer')
+    parser.add_argument('image', nargs='?', type=str, help='Image file to open')
+    parser.add_argument('--image', dest='image_flag', type=str, help='Image file to open')
+    parser.add_argument('--folder', type=str, help='Folder to open')
+    parser.add_argument('--txt', type=str, help='Text file with image names to select')
+    args = parser.parse_args()
+    if args.image_flag:
+        args.image = args.image_flag
+    return args
+
 def main():
+    args = parse_arguments()
     root = tk.Tk()
-    app = ImageGallery(root)
+    app = ImageGallery(root, cli_args=args)
     root.mainloop()
 
 if __name__ == "__main__":
