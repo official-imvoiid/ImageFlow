@@ -342,11 +342,8 @@ class ImageGallery:
                 self.thumb_queue.put(None, block=False)
             except:
                 pass
-        # Restore decorations so a stuck borderless state doesn't leak.
-        try:
-            self.root.overrideredirect(False)
-        except tk.TclError:
-            pass
+        # Restore title bar so a stuck borderless state doesn't leak.
+        self._set_titlebar_visible(True)
         try:
             self.root.quit()
             self.root.destroy()
@@ -1007,6 +1004,38 @@ class ImageGallery:
         else:
             self.enter_fullscreen()
 
+    # ----- Title-bar hide/show (Windows-safe) ----------------------------------
+    # overrideredirect(True) crashes on Windows when you click another app
+    # because the OS can no longer manage focus for an undecorated window.
+    # On Windows we hide the title bar via the Win32 style bits instead, so
+    # Windows keeps full control of activation/focus. On other platforms we
+    # fall back to overrideredirect as before.
+
+    def _set_titlebar_visible(self, visible):
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                GWL_STYLE   = -16
+                WS_CAPTION  = 0x00C00000
+                WS_SYSMENU  = 0x00080000
+                SWP_FLAGS   = 0x0027   # NOMOVE|NOSIZE|NOZORDER|FRAMECHANGED
+                hwnd  = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+                if visible:
+                    style |= WS_CAPTION | WS_SYSMENU
+                else:
+                    style &= ~(WS_CAPTION | WS_SYSMENU)
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, style)
+                ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FLAGS)
+                return
+            except Exception:
+                pass
+        # Non-Windows fallback
+        try:
+            self.root.overrideredirect(not visible)
+        except tk.TclError:
+            pass
+
     def enter_fullscreen(self):
         """Borderless Focus mode — hides ALL chrome (toolbar, sidebar, nav,
         and the OS title bar) while keeping the current window size. Press
@@ -1018,24 +1047,20 @@ class ImageGallery:
             self.sidebar.pack_forget()
         self.nav_frame.pack_forget()
         self.full_btn.config(text="Exit Focus")
-        # Drop the title bar / min-max-close. Wrap because some WMs reject it.
-        try:
-            self.root.overrideredirect(True)
-        except tk.TclError:
-            pass
+        self._set_titlebar_visible(False)
         self._show_focus_controls()
-        self._enable_edge_resize()
+        # Custom edge-resize only needed on non-Windows; Win32 keeps its own
+        # resize handles even after WS_CAPTION is stripped.
+        if sys.platform != 'win32':
+            self._enable_edge_resize()
         self.render()
 
     def exit_fullscreen(self):
         self.fullscreen_mode = False
         self._hide_focus_exit_btn()
-        self._disable_edge_resize()
-        try:
-            if self.root.overrideredirect():
-                self.root.overrideredirect(False)
-        except tk.TclError:
-            pass
+        if sys.platform != 'win32':
+            self._disable_edge_resize()
+        self._set_titlebar_visible(True)
         self.toolbar.pack(side=tk.TOP, fill=tk.X, before=self.main)
         if self.sidebar_visible:
             self.sidebar.pack(side=tk.LEFT, fill=tk.Y, in_=self.main, before=self.display)
@@ -1359,7 +1384,11 @@ class ImageGallery:
     def _scan_folder_thread(self):
         exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff'}
         files = []
-        
+        # Clear stale cache from any previously loaded folder before computing
+        # new aspects. Clearing here (background thread start) is correct;
+        # clearing in _finish_loading (after computing) was discarding the work.
+        self.aspect_cache.clear()
+
         try:
             with os.scandir(self.image_folder) as entries:
                 for entry in entries:
@@ -1419,7 +1448,6 @@ class ImageGallery:
     def _finish_loading(self, files):
         self.images = files
         self.filtered_images.clear()
-        self.aspect_cache.clear()
         self.image_positions.clear()
         self.last_clicked_idx = None
         self.tree.delete(*self.tree.get_children())
@@ -1888,6 +1916,18 @@ def parse_arguments():
     return args
 
 def main():
+    # Make tkinter DPI-aware on Windows so window geometry is correct on
+    # scaled displays and focus transitions don't crash the process.
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
     args = parse_arguments()
     root = tk.Tk()
     app = ImageGallery(root, cli_args=args)
