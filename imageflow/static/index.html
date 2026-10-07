@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ImageFlow</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%232563eb%27/%3E%3Crect x=%276%27 y=%279%27 width=%2720%27 height=%2714%27 rx=%272%27 fill=%27%23fff%27/%3E%3Ccircle cx=%2712%27 cy=%2714%27 r=%272%27 fill=%27%232563eb%27/%3E%3Cpath d=%27M8 21l5-5 3 3 4-4 4 6z%27 fill=%27%232563eb%27/%3E%3C/svg%3E">
+<style>
+:root{--bg:#181818;--sidebar:#1f1f1f;--header:#242424;--text:#e8e8e8;--muted:#9a9a9a;--accent:#2563eb;--accent-hover:#3b82f6;--subtle:#242424;--subtle-hover:#333;--border:#2e2e2e;--ph:#232323;--entry:#2a2a2a;--sel:#0078d4;--ring:#f60000;--ghost:#c0c0c0}
+html[data-theme=light]{--bg:#fff;--sidebar:#f3f3f3;--header:#fafafa;--text:#1a1a1a;--muted:#666;--accent:#2563eb;--accent-hover:#1d4ed8;--subtle:#fafafa;--subtle-hover:#e6e6e6;--border:#dcdcdc;--ph:#ececec;--entry:#fff;--sel:#0078d4;--ghost:#404040}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.3 "Segoe UI",system-ui,-apple-system,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;overflow:hidden}
+button{font:inherit;color:inherit;border:0;border-radius:4px;padding:7px 12px;cursor:pointer;background:var(--subtle)}
+button:hover{background:var(--subtle-hover)}
+button:disabled{opacity:.45;cursor:default}
+button.accent{background:var(--accent);color:#fff}
+button.accent:hover{background:var(--accent-hover)}
+input[type=text],input[type=search],textarea{font:inherit;color:var(--text);background:var(--entry);border:1px solid var(--border);border-radius:4px;padding:6px 8px;width:100%}
+.notice{flex:0 0 auto;background:#b91c1c;color:#fff;text-align:center;font-weight:600;font-size:13px;letter-spacing:.2px;padding:6px 10px;line-height:1.3}
+.notice.hidden{display:none}
+.toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);background:#b91c1c;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;z-index:60;display:none;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+.toast.show{display:block}
+.app{display:flex;flex-direction:column;height:100%}
+@supports (height:100dvh){.app{height:100dvh}}
+.btn-short{display:none}
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:25;display:none}
+.toolbar{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 8px;background:var(--header);flex:0 0 auto;gap:6px}
+.toolbar .group{display:flex;gap:6px;align-items:center}
+.main{display:flex;flex:1 1 auto;min-height:0}
+.sidebar{width:280px;flex:0 0 280px;background:var(--sidebar);display:flex;flex-direction:column;padding:12px;gap:10px;min-height:0}
+.sidebar h4{margin:0 0 4px;font-size:13px}
+.sidebar label{display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0}
+.cols{display:flex;gap:10px}
+.files{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.files .head,.row{display:grid;grid-template-columns:40px 36px 1fr;align-items:center;height:25px}
+.files .head{background:var(--header);font-weight:600;font-size:12px;text-align:center}
+.files .head span:last-child{text-align:left;padding-left:6px}
+.files .body{flex:1 1 auto;overflow-y:auto;position:relative}
+.files .spacer{position:relative;width:100%}
+.row{position:absolute;left:0;right:0;cursor:default;font-size:13px;white-space:nowrap}
+.row span{text-align:center}
+.row .name{text-align:left;padding-left:6px;overflow:hidden;text-overflow:ellipsis}
+.row .tick{cursor:pointer}
+.row.cur{background:var(--accent);color:#fff}
+.display{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0}
+.grid{flex:1 1 auto;overflow-y:auto;position:relative;margin:10px;min-height:0;outline:none}
+.grid .inner{position:relative;width:100%}
+.tile{position:absolute;background:var(--ph);border:1px solid var(--border);overflow:hidden;cursor:pointer;user-select:none}
+.tile img{display:block;width:100%;height:100%;opacity:0;transition:opacity .12s}
+.tile img.loaded{opacity:1}
+.tile.sel{outline:3px solid var(--sel);outline-offset:2px}
+.tile.ring{outline:8px solid var(--ring);outline-offset:5px;z-index:2;box-shadow:0 0 0 2px #fff inset,0 0 24px 6px rgba(255,45,45,.75);animation:ringpulse .5s ease-in-out 5 alternate}
+@keyframes ringpulse{from{outline-color:var(--ring);opacity:1}to{outline-color:#fff;opacity:.6}}
+.tile.broken::after{content:"✕";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:22px}
+.single{flex:1 1 auto;position:relative;overflow:hidden;margin:10px;display:none;cursor:default}
+.single img{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform;user-select:none;-webkit-user-drag:none;max-width:none}
+.single img.preview{filter:none}
+.single.zoomed{cursor:grab}
+.single.zoomed.dragging{cursor:grabbing}
+.ghost{position:absolute;display:none;background:transparent;color:#e6e6e6;text-shadow:0 1px 2px #000,0 0 8px rgba(0,0,0,.8);padding:8px 16px;font-size:36px;line-height:1;cursor:pointer;z-index:5;opacity:0;transition:opacity .15s;user-select:none}
+.ghost.show{display:block;opacity:1}
+.ghost:hover{color:#fff}
+#ghost-prev{left:14px;top:50%;transform:translateY(-50%)}
+#ghost-next{right:14px;top:50%;transform:translateY(-50%)}
+#ghost-exit{right:14px;top:14px;font-size:18px;padding:6px 14px}
+.nav{display:flex;align-items:center;height:44px;padding:0 8px;gap:8px;flex:0 0 auto}
+.nav .info{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 6px}
+.nav .counter{color:var(--text);padding:0 8px;white-space:nowrap}
+body.focus .toolbar,body.focus .sidebar,body.focus .nav{display:none}
+body.focus .grid,body.focus .single{margin:0}
+body.nopanel .sidebar{display:none}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--text);font-size:18px;white-space:pre-line}
+.tip{position:fixed;z-index:50;background:#000;color:#fff;padding:3px 6px;font-size:13px;border-radius:2px;pointer-events:none;display:none;max-width:60vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:100}
+.modal.open{display:flex}
+.dialog{background:var(--sidebar);color:var(--text);border:1px solid var(--border);border-radius:6px;width:min(640px,92vw);max-height:86vh;display:flex;flex-direction:column;padding:16px;gap:10px}
+.dialog h3{margin:0;font-size:16px}
+.dialog .list{flex:1 1 auto;overflow:auto;border:1px solid var(--border);border-radius:4px;max-height:46vh;min-height:120px}
+.dialog .list div{padding:5px 8px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dialog .list div:hover{background:var(--subtle-hover)}
+.dialog .actions{display:flex;justify-content:flex-end;gap:8px}
+.dialog textarea{height:140px;resize:vertical}
+.hidden{display:none!important}
+.zoom{display:flex;align-items:center;gap:4px}
+.zoom span{width:46px;text-align:center}
+.zoom button{padding:5px 10px}
+.row:hover{background:var(--subtle-hover)}
+.row.cur:hover{background:var(--accent)}
+/* ---- small screens: the sidebar becomes a slide-in panel, labels shorten ---- */
+@media (max-width:900px){
+  .toolbar{height:auto;min-height:44px;flex-wrap:wrap;padding:4px 6px;row-gap:4px}
+  .toolbar .group{flex-wrap:wrap;gap:4px}
+  button{padding:7px 10px}
+  .btn-long{display:none}.btn-short{display:inline}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:30;width:min(320px,86vw);flex:none;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 14px rgba(0,0,0,.45);padding-top:14px}
+  body.nopanel .sidebar{display:flex;transform:translateX(-100%)}
+  body:not(.nopanel) .sidebar{transform:none}
+  body:not(.nopanel) .backdrop{display:block}
+  .grid,.single{margin:6px}
+  .nav{padding:0 6px;gap:6px}
+  .nav .counter{font-size:12px;padding:0 4px}
+  .zoom span{width:40px}
+}
+@media (max-width:480px){
+  .nav .counter{display:none}
+  .toolbar .group{gap:3px}
+}
+/* ---- touch devices: no hover tooltip, always-visible viewer arrows ---- */
+@media (pointer:coarse){
+  .tip{display:none!important}
+  .single .ghost.touch{display:block;opacity:.75}
+  .tile{cursor:default}
+  button{padding:9px 12px}
+}
+.single{touch-action:none}
+.grid{touch-action:pan-y}
+.tile.pressing{outline:3px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="notice" id="notice">VIEW ONLY &nbsp;·&nbsp; This web page is for viewing. Select, export and import in the ImageFlow desktop app.</div>
+  <header class="toolbar">
+    <div class="group">
+      <button id="btn-open">📁<span class="btn-long">&nbsp; Open Folder</span><span class="btn-short">&nbsp;Open</span></button>
+      <button id="btn-clear" disabled><span class="btn-long">Clear Selection</span><span class="btn-short">Clear</span></button>
+      <button id="btn-grid" class="hidden">◀<span class="btn-long">&nbsp; Grid</span></button>
+    </div>
+    <div class="group">
+      <div class="zoom hidden" id="zoom"><span style="width:auto">Zoom</span><button id="zoom-out">−</button><span id="zoom-val">100%</span><button id="zoom-in">+</button></div>
+      <button id="btn-panel">Panel</button>
+      <button id="btn-theme">☀</button>
+      <button id="btn-focus">Focus</button>
+    </div>
+  </header>
+  <div class="main">
+    <aside class="sidebar">
+      <div><h4>Search</h4><input id="search" type="search" placeholder="Filter filenames" spellcheck="false" autocomplete="off"></div>
+      <div><h4>View</h4>
+        <label><input type="radio" name="view" value="all" checked> All</label>
+        <label><input type="radio" name="view" value="selected"> Selected Only</label>
+      </div>
+      <div><h4>Columns</h4><div class="cols" id="cols">
+        <label><input type="radio" name="cols" value="3"> 3</label>
+        <label><input type="radio" name="cols" value="4" checked> 4</label>
+        <label><input type="radio" name="cols" value="5"> 5</label>
+        <label><input type="radio" name="cols" value="6"> 6</label>
+      </div></div>
+      <h4 style="margin-top:4px">Files</h4>
+      <div class="files"><div class="head"><span>#</span><span>✓</span><span>Filename</span></div><div class="body" id="list"><div class="spacer" id="list-spacer"></div></div></div>
+    </aside>
+    <section class="display">
+      <div class="grid" id="grid" tabindex="0"><div class="inner" id="grid-inner"></div><div class="empty" id="empty">Open a folder to begin</div></div>
+      <div class="single" id="single">
+        <img id="single-preview" class="preview" alt="">
+        <img id="single-img" alt="">
+        <div class="ghost" id="ghost-prev">‹</div><div class="ghost" id="ghost-next">›</div><div class="ghost" id="ghost-exit">✕</div>
+      </div>
+      <footer class="nav">
+        <button id="btn-prev" class="accent hidden">◀<span class="btn-long">&nbsp; Previous</span></button>
+        <button id="btn-select" class="accent hidden">☆&nbsp; Select&nbsp; (S)</button>
+        <div class="info" id="info">Open a folder to begin</div>
+        <div class="counter" id="counter"></div>
+        <button id="btn-next" class="accent hidden"><span class="btn-long">Next&nbsp; </span>▶</button>
+      </footer>
+    </section>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast">View only — select in the desktop app</div>
+<div class="backdrop" id="backdrop"></div>
+
+<div class="modal" id="modal-open"><div class="dialog">
+  <h3>Open folder</h3>
+  <input type="text" id="open-path" spellcheck="false">
+  <div class="list" id="open-list"></div>
+  <div class="actions"><button id="open-cancel">Cancel</button><button class="accent" id="open-ok">Open this folder</button></div>
+</div></div>
+
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const GAP = 4, ROW_H = 25, ZMIN = .25, ZMAX = 5, ZSTEP = .25, BUCKETS = [192,256,320,384,512,640,768];
+const S = {
+  images: [], byIndex: new Map(), filtered: [], fiByIndex: new Map(),
+  version: -1, scanId: -1, folder: '', selectedCount: 0,
+  search: '', view: 'all', cols: 4, colFixed: 0,
+  tiles: [], colLists: [], colW: 0, totalH: 0, drawn: new Map(),
+  mode: 'grid', cur: 0, zoom: 1, panX: 0, panY: 0, lastClicked: null,
+  savedScroll: 0, listRows: new Map(), ring: null, ringTimer: null,
+  natural: null, dragging: false, focus: false, allowOpen: true, broken: new Set(),
+  panelVisible: true, suppressClickUntil: 0, readOnly: true, curRow: null, curId: null,
+};
+const narrowMQ = window.matchMedia('(max-width: 900px)');
+const coarseMQ = window.matchMedia('(pointer: coarse)');
+const isNarrow = () => narrowMQ.matches;
+const grid = $('grid'), inner = $('grid-inner'), empty = $('empty'), single = $('single'),
+      img = $('single-img'), preview = $('single-preview'), list = $('list'), spacer = $('list-spacer'),
+      info = $('info'), counter = $('counter'), tip = $('tip');
+
+// ------------------------------------------------------------------ helpers
+const api = async (url, body) => {
+  const r = await fetch(url, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch (e) {} throw new Error(m); }
+  return r.json();
+};
+const setInfo = t => info.textContent = t;
+// Replies from the threaded server can arrive out of order; only a newer
+// version may overwrite what we know.
+const accept = st => { if (st && st.version >= S.version) { S.version = st.version; S.selectedCount = st.selected; return true; } return false; };
+let toastTimer = 0;
+const toast = msg => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1600); };
+const canEdit = () => { if (S.readOnly) { toast('View only — select in the desktop app'); return false; } return true; };
+const bucket = w => { for (const b of BUCKETS) if (w <= b) return b; return BUCKETS[BUCKETS.length-1]; };
+const thumbW = () => bucket(Math.ceil(S.colW * Math.min(window.devicePixelRatio || 1, 2)));
+const bisectRight = (arr, x) => { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo+hi)>>1; if (arr[m] <= x) lo = m+1; else hi = m; } return lo; };
+const isTyping = () => { const a = document.activeElement; if (!a) return false; if (a.tagName === 'TEXTAREA') return true; return a.tagName === 'INPUT' && !['radio', 'checkbox', 'button', 'file', 'submit'].includes(a.type); };
+
+// -------------------------------------------------------------------- theme
+function setTheme(dark) {
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  $('btn-theme').textContent = dark ? '☀' : '☾';
+  try { localStorage.setItem('imageflow-theme', dark ? 'dark' : 'light'); } catch (e) {}
+}
+setTheme((() => { try { return (localStorage.getItem('imageflow-theme') || 'dark') === 'dark'; } catch (e) { return true; } })());
+$('btn-theme').onclick = () => setTheme(document.documentElement.dataset.theme !== 'dark');
+// Panel: a sidebar on wide screens, a slide-in drawer on small ones (closed by default there).
+function applyPanel() { document.body.classList.toggle('nopanel', !S.panelVisible); if (!isNarrow() && S.images.length) relayout(true); }
+function setPanel(v) { S.panelVisible = v; applyPanel(); if (v) requestAnimationFrame(syncList); }
+$('btn-panel').onclick = () => setPanel(!S.panelVisible);
+$('backdrop').onclick = () => setPanel(false);
+let wasNarrow = isNarrow(), desktopPanel = true;
+if (wasNarrow) S.panelVisible = false;
+applyPanel();
+narrowMQ.addEventListener('change', () => {
+  const now = isNarrow();
+  if (now && !wasNarrow) { desktopPanel = S.panelVisible; setPanel(false); }
+  else if (!now && wasNarrow) setPanel(desktopPanel);
+  wasNarrow = now;
+});
+try { const c = parseInt(localStorage.getItem('imageflow-cols')); if ([3,4,5,6].includes(c)) S.cols = c; else if (window.innerWidth < 600) S.cols = 3; } catch (e) { if (window.innerWidth < 600) S.cols = 3; }
+document.querySelectorAll('input[name=cols]').forEach(r => r.checked = +r.value === S.cols);
+
+// -------------------------------------------------------------------- data
+async function loadImages(fresh) {
+  const d = await api('/api/images');
+  S.version = d.version; S.scanId = d.scan_id; S.folder = d.folder; S.selectedCount = d.selected; S.allowOpen = d.allow_open;
+  S.readOnly = !!d.read_only; $('notice').classList.toggle('hidden', !S.readOnly); $('notice').textContent = S.readOnly ? 'VIEW ONLY \u00a0\u00b7\u00a0 This web page is for viewing. Select, export and import in the ImageFlow desktop app.' : 'WEB VIEW \u00a0\u00b7\u00a0 Selection changes here are shared with the desktop app.';
+  S.images = d.images.map(([i, name, sel, a]) => ({i, name, sel: !!sel, a: a || null}));
+  S.byIndex = new Map(S.images.map(o => [o.i, o]));
+  document.title = S.folder ? 'ImageFlow — ' + S.folder.split(/[\\/]/).filter(Boolean).pop() : 'ImageFlow';
+  if (fresh) { S.lastClicked = null; S.savedScroll = 0; S.broken.clear(); if (S.mode === 'single') exitSingle(false); }
+  if (S.view === 'selected' && S.selectedCount === 0) setView('all', true);
+  updateView();
+  if (fresh) setInfo(S.images.length ? `Loaded ${S.images.length} images` : 'No images in this folder');
+  fetchAspects();
+}
+
+let aspectJob = 0;
+async function fetchAspects() {
+  const job = ++aspectJob;
+  const missing = S.images.filter(o => o.a === null).map(o => o.i);
+  for (let k = 0; k < missing.length && job === aspectJob; k += 300) {
+    const ids = missing.slice(k, k + 300);
+    let res; try { res = await api('/api/aspects?ids=' + ids.join(',')); } catch (e) { return; }
+    if (job !== aspectJob) return;
+    for (const id in res) { const o = S.byIndex.get(+id); if (o) o.a = res[id]; }
+    if (S.mode === 'grid') relayout(true);
+  }
+}
+
+async function poll() {
+  try {
+    const st = await api('/api/state');
+    if (st.scan_id !== S.scanId) await loadImages(true);
+    else if (st.version !== S.version) {
+      const d = await api('/api/selection');
+      if (d.version < S.version) return setTimeout(poll, 1500);
+      S.version = d.version; S.selectedCount = d.selected;
+      const sel = new Set(d.selected_ids);
+      let changed = false;
+      for (const o of S.images) { const v = sel.has(o.i); if (o.sel !== v) { o.sel = v; changed = true; markChanged(o); } }
+      if (changed) { if (S.view === 'selected') updateView(); else updateUiState(); }
+    }
+  } catch (e) {}
+  setTimeout(poll, 1500);
+}
+
+// ------------------------------------------------------------------- view
+function setView(v, silent) {
+  S.view = v; document.querySelectorAll('input[name=view]').forEach(r => r.checked = r.value === v);
+  if (!silent) updateView();
+}
+document.querySelectorAll('input[name=view]').forEach(r => r.onchange = () => setView(r.value));
+document.querySelectorAll('input[name=cols]').forEach(r => r.onchange = () => { S.cols = +r.value; try { localStorage.setItem('imageflow-cols', S.cols); } catch (e) {} relayout(true); });
+let searchTimer = null;
+$('search').oninput = e => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { S.search = e.target.value.toLowerCase(); updateView(); }, 120); };
+
+function updateView() {
+  const q = S.search;
+  S.filtered = S.images.filter(o => (!q || o.name.toLowerCase().includes(q)) && (S.view !== 'selected' || o.sel));
+  S.fiByIndex = new Map(S.filtered.map((o, fi) => [o.i, fi]));
+  const n = S.filtered.length;
+  const colRadios = document.querySelectorAll('input[name=cols]');
+  if (S.view === 'selected' && n >= 1 && n <= 3) { colRadios.forEach(r => { r.disabled = true; r.checked = false; }); S.colFixed = n; }
+  else { colRadios.forEach(r => { r.disabled = false; r.checked = +r.value === S.cols; }); S.colFixed = 0; }
+  rebuildList();
+  if (S.view === 'selected' && n === 1) { showSingle(0); return; }
+  if (S.mode === 'single') {
+    // Keep the same image across a filter change; its index may have moved.
+    const nf = S.fiByIndex.get(S.curId);
+    if (nf === undefined) exitSingle(false); else { S.cur = nf; loadCurrent(); updateUiState(); listFocus(nf); return; }
+  }
+  updateUiState();
+  relayout(false);
+  grid.scrollTop = 0;
+  sync();
+}
+
+function updateUiState() {
+  const singleMode = S.mode === 'single';
+  $('btn-grid').classList.toggle('hidden', !singleMode || (S.view === 'selected' && S.filtered.length === 1));
+  $('zoom').classList.toggle('hidden', !singleMode);
+  const many = S.filtered.length > 1;
+  $('btn-prev').classList.toggle('hidden', !singleMode || !many);
+  $('btn-next').classList.toggle('hidden', !singleMode || !many);
+  $('btn-select').classList.toggle('hidden', !singleMode || S.readOnly);
+  if (singleMode && S.filtered[S.cur]) { const on = S.filtered[S.cur].sel; $('btn-select').innerHTML = (on ? '★' : '☆') + '<span class="btn-long">' + (on ? ' Selected (S)' : ' Select (S)') + '</span>'; }
+  $('btn-clear').disabled = S.selectedCount === 0 || S.readOnly;
+  $('btn-clear').classList.toggle('hidden', S.readOnly);
+  counter.textContent = S.images.length ? `${S.selectedCount} selected / ${S.images.length} total` : '';
+  empty.style.display = S.filtered.length ? 'none' : 'flex';
+  empty.textContent = S.images.length ? 'No images match' : 'No images\nSelect a folder';
+}
+
+// ------------------------------------------------------------------- list
+function rebuildList() {
+  for (const el of S.listRows.values()) el.remove();
+  S.listRows.clear();
+  S.curRow = null;
+  spacer.style.height = (S.filtered.length * ROW_H) + 'px';
+  list.scrollTop = Math.min(list.scrollTop, Math.max(0, S.filtered.length * ROW_H - list.clientHeight));
+  syncList();
+  requestAnimationFrame(syncList);   // again once the browser has laid the panel out
+}
+function syncList() {
+  const top = list.scrollTop, h = list.clientHeight;
+  const first = Math.max(0, Math.floor(top / ROW_H) - 5), last = Math.min(S.filtered.length - 1, Math.ceil((top + h) / ROW_H) + 5);
+  for (const [fi, el] of S.listRows) if (fi < first || fi > last) { el.remove(); S.listRows.delete(fi); }
+  for (let fi = first; fi <= last; fi++) {
+    let el = S.listRows.get(fi);
+    if (!el) {
+      const o = S.filtered[fi];
+      el = document.createElement('div'); el.className = 'row'; el.dataset.fi = fi; el.style.top = (fi * ROW_H) + 'px';
+      el.innerHTML = `<span>${fi + 1}</span><span class="tick">${o.sel ? '✓' : ''}</span><span class="name"></span>`;
+      el.querySelector('.name').textContent = o.name;
+      el.classList.toggle('cur', fi === S.curRow);
+      spacer.appendChild(el); S.listRows.set(fi, el);
+    }
+  }
+}
+list.addEventListener('scroll', syncList, {passive: true});
+new ResizeObserver(() => syncList()).observe(list);
+function listRowRefresh(fi) {
+  const el = S.listRows.get(fi); if (!el) return;
+  el.querySelector('.tick').textContent = S.filtered[fi].sel ? '✓' : '';
+  el.classList.toggle('cur', fi === S.curRow);
+}
+// Exactly one row carries the highlight: the one tracked in S.curRow.
+function listFocus(fi) {
+  const prev = S.curRow;
+  S.curRow = fi;
+  if (S.mode === 'single') S.cur = fi; else S.lastClicked = fi;
+  if (prev !== null && prev !== fi) listRowRefresh(prev);
+  listRowRefresh(fi);
+  const y = fi * ROW_H;
+  if (y < list.scrollTop || y + ROW_H > list.scrollTop + list.clientHeight) list.scrollTop = Math.max(0, y - list.clientHeight / 2);
+  syncList();
+}
+list.addEventListener('click', e => {
+  const row = e.target.closest('.row'); if (!row) return;
+  const fi = +row.dataset.fi;
+  if (e.target.classList.contains('tick')) {
+    if (e.shiftKey && S.lastClicked !== null && S.lastClicked < S.filtered.length) selectRange(S.lastClicked, fi); else toggle(fi);
+    S.lastClicked = fi; return;
+  }
+  listFocus(fi);
+  if (S.mode === 'grid') scrollGridTo(fi);
+  if (isNarrow()) setPanel(false);
+});
+list.addEventListener('dblclick', e => { const row = e.target.closest('.row'); if (row) { S.savedScroll = grid.scrollTop; showSingle(+row.dataset.fi); if (isNarrow()) setPanel(false); } });
+
+// -------------------------------------------------------------- selection
+async function toggle(fi) {
+  if (!canEdit()) return;
+  const o = S.filtered[fi]; if (!o) return;
+  o.sel = !o.sel; S.selectedCount += o.sel ? 1 : -1; markChanged(o);
+  if (S.view === 'selected') updateView(); else updateUiState();
+  try { accept(await api('/api/select', {toggle: o.i})); updateUiState(); } catch (e) { setInfo('Selection failed: ' + e.message); }
+}
+async function selectRange(a, b) {
+  if (!canEdit()) return;
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  for (let fi = lo; fi <= hi; fi++) { const o = S.filtered[fi]; if (!o.sel) { o.sel = true; S.selectedCount++; markChanged(o); } }
+  if (S.view === 'selected') updateView(); else updateUiState();
+  try { accept(await api('/api/select', {ids: S.filtered.slice(lo, hi + 1).map(o => o.i), value: true})); updateUiState(); } catch (e) {}
+}
+function markChanged(o) {
+  const fi = S.fiByIndex.get(o.i); if (fi === undefined) return;
+  listRowRefresh(fi);
+  const t = S.drawn.get(fi); if (t) t.classList.toggle('sel', o.sel);
+  if (S.mode === 'single' && fi === S.cur) updateUiState();
+}
+$('btn-clear').onclick = async () => {
+  if (!canEdit()) return;
+  for (const o of S.images) if (o.sel) { o.sel = false; markChanged(o); }
+  S.selectedCount = 0; S.lastClicked = null;
+  if (S.view !== 'all') setView('all'); else updateUiState();
+  try { accept(await api('/api/select', {clear: true})); updateUiState(); } catch (e) {}
+};
+$('btn-select').onclick = () => { if (S.mode === 'single') toggle(S.cur); };
+
+// -------------------------------------------------------------- open folder
+async function browse(path) {
+  let d; try { d = await api('/api/browse?path=' + encodeURIComponent(path || '')); } catch (e) { setInfo(e.message); return; }
+  $('open-path').value = d.path;
+  const box = $('open-list'); box.innerHTML = '';
+  const add = (label, target) => { const el = document.createElement('div'); el.textContent = label; el.onclick = () => browse(target); box.appendChild(el); };
+  if (d.parent) add('⬆  ..', d.parent);
+  for (const drv of d.drives || []) if (drv !== d.path) add('💽  ' + drv, drv);
+  for (const name of d.dirs) add('📁  ' + name, d.path.replace(/[\\/]+$/, '') + (d.path.includes('\\') ? '\\' : '/') + name);
+  if (d.error) { const el = document.createElement('div'); el.textContent = d.error; el.style.color = 'var(--muted)'; box.appendChild(el); }
+}
+$('btn-open').onclick = () => { if (!S.allowOpen) { setInfo('Folder changes are disabled for this server'); return; } $('modal-open').classList.add('open'); browse(S.folder || ''); };
+$('open-cancel').onclick = () => $('modal-open').classList.remove('open');
+$('open-path').onkeydown = e => { if (e.key === 'Enter') browse(e.target.value); };
+$('open-ok').onclick = async () => {
+  const folder = $('open-path').value; $('modal-open').classList.remove('open'); setInfo('Scanning...');
+  try { await api('/api/open', {folder}); await loadImages(true); } catch (e) { setInfo('Error: ' + e.message); }
+};
+document.querySelectorAll('.modal').forEach(m => m.addEventListener('mousedown', e => { if (e.target === m) m.classList.remove('open'); }));
+
+// ------------------------------------------------------------------- layout
+function columnsNow() { return S.colFixed === 2 || S.colFixed === 3 ? S.colFixed : S.cols; }
+function anchor() {
+  if (!S.tiles.length) return null;
+  const top = grid.scrollTop; let best = null;
+  for (const col of S.colLists) {
+    let i = Math.max(0, bisectRight(col.ys, top) - 1); let t = col.tiles[i];
+    if (t && t.y + t.h < top && col.tiles[i + 1]) t = col.tiles[i + 1];
+    if (t && (!best || t.y < best.y)) best = t;
+  }
+  return best ? {i: best.o.i, off: best.y - top} : null;
+}
+function relayout(keep) {
+  if (S.mode !== 'grid') return;
+  const cw = grid.clientWidth; if (cw <= 1) return;
+  const a = keep ? anchor() : null;
+  const cols = Math.max(1, columnsNow());
+  const colW = Math.max(50, Math.floor((cw - GAP * (cols + 1)) / cols));
+  const heights = new Array(cols).fill(GAP);
+  const tiles = [], colLists = Array.from({length: cols}, () => ({tiles: [], ys: []}));
+  S.filtered.forEach((o, fi) => {
+    let c = 0; for (let k = 1; k < cols; k++) if (heights[k] < heights[c]) c = k;
+    const asp = o.a || 1, h = Math.max(1, Math.floor(colW / asp));
+    const t = {o, fi, x: GAP + c * (colW + GAP), y: heights[c], w: colW, h};
+    tiles.push(t); colLists[c].tiles.push(t); colLists[c].ys.push(t.y); heights[c] += h + GAP;
+  });
+  S.tiles = tiles; S.colLists = colLists; S.colW = colW; S.totalH = tiles.length ? Math.max(...heights) + GAP : 0;
+  inner.style.height = Math.max(S.totalH, 1) + 'px';
+  for (const el of S.drawn.values()) el.remove(); S.drawn.clear();
+  if (a) { const fi = S.fiByIndex.get(a.i); if (fi !== undefined && S.tiles[fi]) grid.scrollTop = Math.max(0, S.tiles[fi].y - a.off); }
+  sync();
+}
+function visibleTiles(top, bottom) {
+  const out = [];
+  for (const col of S.colLists) {
+    let i = Math.max(0, bisectRight(col.ys, top) - 1);
+    for (; i < col.tiles.length; i++) { const t = col.tiles[i]; if (t.y > bottom) break; if (t.y + t.h >= top) out.push(t); }
+  }
+  return out;
+}
+let syncQueued = false;
+function sync() { if (!syncQueued) { syncQueued = true; requestAnimationFrame(doSync); } }
+function doSync() {
+  syncQueued = false;
+  if (S.mode !== 'grid') return;
+  const top = grid.scrollTop, h = grid.clientHeight, m = h * 0.75;
+  const vis = visibleTiles(top - m, top + h + m), want = new Set(vis.map(t => t.fi));
+  for (const [fi, el] of S.drawn) if (!want.has(fi)) { el.remove(); S.drawn.delete(fi); }
+  const tw = thumbW();
+  for (const t of vis) if (!S.drawn.has(t.fi)) {
+    const el = document.createElement('div'); el.className = 'tile'; el.dataset.fi = t.fi;
+    el.style.cssText = `left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px`;
+    if (t.o.sel) el.classList.add('sel'); if (S.ring === t.o.i) el.classList.add('ring');
+    if (S.broken.has(t.o.i)) el.classList.add('broken');
+    else {
+      const im = new Image(); im.decoding = 'async'; im.alt = '';
+      im.onload = () => im.classList.add('loaded');
+      im.onerror = () => { S.broken.add(t.o.i); el.classList.add('broken'); im.remove(); };
+      im.src = `/thumb/${t.o.i}?w=${tw}`; el.appendChild(im);
+    }
+    inner.appendChild(el); S.drawn.set(t.fi, el);
+  }
+}
+grid.addEventListener('scroll', sync, {passive: true});
+new ResizeObserver(() => { if (S.mode === 'grid') relayout(true); else renderSingle(); }).observe(grid.parentElement);
+
+function scrollGridTo(fi) {
+  const t = S.tiles[fi]; if (!t) return;
+  grid.scrollTop = Math.max(0, t.y - (grid.clientHeight - t.h) / 2);
+  setRing(t.o.i); sync();
+}
+function setRing(i) {
+  const old = S.ring; S.ring = i; clearTimeout(S.ringTimer);
+  for (const x of [old, i]) { const fi = S.fiByIndex.get(x); const el = fi !== undefined && S.drawn.get(fi); if (el) el.classList.toggle('ring', x === i); }
+  S.ringTimer = setTimeout(() => { const fi = S.fiByIndex.get(S.ring); const el = fi !== undefined && S.drawn.get(fi); if (el) el.classList.remove('ring'); S.ring = null; }, 3500);
+}
+
+// grid mouse
+inner.addEventListener('click', e => {
+  if (Date.now() < S.suppressClickUntil) return;   // handled as a touch gesture
+  const el = e.target.closest('.tile'); if (!el) return;
+  const fi = +el.dataset.fi;
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    if (e.shiftKey && S.lastClicked !== null && S.lastClicked < S.filtered.length) selectRange(S.lastClicked, fi); else toggle(fi);
+    listFocus(fi); return;
+  }
+  listFocus(fi);
+});
+inner.addEventListener('dblclick', e => { if (Date.now() < S.suppressClickUntil) return; const el = e.target.closest('.tile'); if (el) { S.savedScroll = grid.scrollTop; showSingle(+el.dataset.fi); } });
+// Touch on the grid: tap opens, long-press toggles selection (Shift/Ctrl have no finger).
+let tp = null;
+inner.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  const el = e.target.closest('.tile'); if (!el) return;
+  tp = {el, fi: +el.dataset.fi, x: e.clientX, y: e.clientY, moved: false, long: false, timer: 0};
+  tp.timer = setTimeout(() => { if (!tp || tp.moved) return; tp.long = true; el.classList.remove('pressing'); toggle(tp.fi); S.lastClicked = tp.fi; if (navigator.vibrate) navigator.vibrate(12); }, 450);
+  el.classList.add('pressing');
+});
+const touchEnd = e => {
+  if (!tp || e.pointerType !== 'touch') return;
+  clearTimeout(tp.timer); tp.el.classList.remove('pressing');
+  S.suppressClickUntil = Date.now() + 600;
+  if (!tp.long && !tp.moved && e.type === 'pointerup') { S.savedScroll = grid.scrollTop; S.lastClicked = tp.fi; showSingle(tp.fi); }
+  tp = null;
+};
+inner.addEventListener('pointermove', e => { if (tp && e.pointerType === 'touch' && Math.hypot(e.clientX - tp.x, e.clientY - tp.y) > 10) { tp.moved = true; clearTimeout(tp.timer); tp.el.classList.remove('pressing'); } });
+inner.addEventListener('pointerup', touchEnd); inner.addEventListener('pointercancel', touchEnd);
+inner.addEventListener('mousemove', e => {
+  if (coarseMQ.matches) return;
+  const el = e.target.closest('.tile');
+  if (!el) { tip.style.display = 'none'; return; }
+  tip.textContent = S.filtered[+el.dataset.fi].name; tip.style.display = 'block';
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(e.clientX + 14, window.innerWidth - r.width - 4) + 'px';
+  tip.style.top = Math.min(e.clientY + 14, window.innerHeight - r.height - 4) + 'px';
+});
+inner.addEventListener('mouseleave', () => tip.style.display = 'none');
+grid.addEventListener('scroll', () => tip.style.display = 'none', {passive: true});
+
+// ------------------------------------------------------------- single view
+function showSingle(fi) {
+  if (!(fi >= 0 && fi < S.filtered.length)) return;
+  S.mode = 'single'; S.cur = fi; S.zoom = 1; S.panX = S.panY = 0; $('zoom-val').textContent = '100%';
+  grid.style.display = 'none'; single.style.display = 'block'; tip.style.display = 'none';
+  if (isNarrow()) setPanel(false);
+  updateUiState(); loadCurrent(); listFocus(fi); touchGhosts();
+}
+function exitSingle(restore) {
+  S.mode = 'grid'; S.zoom = 1; S.panX = S.panY = 0; S.natural = null; S.curId = null;
+  img.removeAttribute('src'); preview.removeAttribute('src'); single.classList.remove('zoomed');
+  single.style.display = 'none'; grid.style.display = 'block';
+  updateUiState(); relayout(false);
+  if (restore !== false) grid.scrollTop = S.savedScroll;
+  sync(); if (S.filtered[S.cur]) listFocus(S.cur);
+}
+$('btn-grid').onclick = () => exitSingle(true);
+let loadSeq = 0;
+function imageUrl(o) { return /\.(tif|tiff)$/i.test(o.name) ? `/image/${o.i}?fit=4096` : `/image/${o.i}`; }
+function loadCurrent() {
+  const o = S.filtered[S.cur]; if (!o) return;
+  S.curId = o.i;
+  const seq = ++loadSeq; S.natural = null;
+  setInfo(`${S.cur + 1} / ${S.filtered.length} - ${o.name}`);
+  preview.style.display = 'block'; preview.src = `/thumb/${o.i}?w=768`; img.style.visibility = 'hidden';
+  preview.onload = () => { if (seq === loadSeq && !S.natural) { S.natural = {w: preview.naturalWidth, h: preview.naturalHeight, el: preview}; renderSingle(); } };
+  img.onload = () => { if (seq !== loadSeq) return; S.natural = {w: img.naturalWidth, h: img.naturalHeight, el: img}; img.style.visibility = 'visible'; preview.style.display = 'none'; renderSingle(); };
+  img.onerror = () => { if (seq === loadSeq) setInfo('Error loading image'); };
+  img.src = imageUrl(o);
+  for (const k of [S.cur + 1, S.cur - 1]) { const n = S.filtered[k]; if (n) { const pre = new Image(); pre.src = imageUrl(n); } }
+  updateUiState();
+}
+function renderSingle() {
+  if (S.mode !== 'single' || !S.natural) return;
+  const cw = single.clientWidth, ch = single.clientHeight, {w, h} = S.natural;
+  const scale = Math.min(cw / w, ch / h) * S.zoom, tw = w * scale, th = h * scale;
+  const x = cw / 2 + S.panX - tw / 2, y = ch / 2 + S.panY - th / 2;
+  for (const el of [img, preview]) { el.style.width = tw + 'px'; el.style.height = th + 'px'; el.style.transform = `translate(${x}px,${y}px)`; }
+  single.classList.toggle('zoomed', S.zoom > 1);
+}
+function setZoom(z, continuous) {
+  z = Math.min(ZMAX, Math.max(ZMIN, continuous ? Math.round(z * 1000) / 1000 : Math.round(z * 100) / 100));
+  if (z === S.zoom) return;
+  if (z <= 1) S.panX = S.panY = 0; else { const f = z / S.zoom; S.panX *= f; S.panY *= f; }
+  S.zoom = z; $('zoom-val').textContent = Math.round(z * 100) + '%'; renderSingle();
+}
+$('zoom-in').onclick = () => setZoom(S.zoom + ZSTEP);
+$('zoom-out').onclick = () => setZoom(S.zoom - ZSTEP);
+single.addEventListener('wheel', e => { e.preventDefault(); setZoom(S.zoom + (e.deltaY < 0 ? ZSTEP : -ZSTEP)); }, {passive: false});
+// Pointer handling in the viewer: mouse drag pans when zoomed; on touch one
+// finger pans (zoomed) or swipes to the next image, two fingers pinch-zoom,
+// and a tap toggles the chrome.
+const ptrs = new Map(); let gesture = null;
+single.addEventListener('pointerdown', e => {
+  if (e.target.classList.contains('ghost')) return;
+  if (e.pointerType === 'mouse' && (e.button !== 0 || S.zoom <= 1)) return;
+  try { single.setPointerCapture(e.pointerId); } catch (err) {}
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (ptrs.size === 1) gesture = {type: 'one', x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, t: Date.now(), touch: e.pointerType === 'touch'};
+  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; gesture = {type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y), z0: S.zoom}; }
+  single.classList.add('dragging'); e.preventDefault();
+});
+single.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (!gesture) return;
+  if (gesture.type === 'pinch' && ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (gesture.d0 > 0) setZoom(gesture.z0 * d / gesture.d0, true);
+    return;
+  }
+  if (gesture.type === 'one') {
+    const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y; gesture.x = e.clientX; gesture.y = e.clientY;
+    if (Math.hypot(e.clientX - gesture.sx, e.clientY - gesture.sy) > 8) gesture.moved = true;
+    if (S.zoom > 1) { S.panX += dx; S.panY += dy; renderSingle(); }
+  }
+});
+const ptrEnd = e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if (gesture && gesture.type === 'one' && ptrs.size === 0 && e.type === 'pointerup') {
+    const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy;
+    if (gesture.touch && S.zoom <= 1 && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx < 0 ? 1 : -1);
+    else if (gesture.touch && !gesture.moved && Date.now() - gesture.t < 350) setFocus(!S.focus);
+  }
+  if (ptrs.size === 0) { gesture = null; single.classList.remove('dragging'); }
+  else if (ptrs.size === 1) { const [p] = [...ptrs.values()]; gesture = {type: 'one', x: p.x, y: p.y, sx: p.x, sy: p.y, moved: true, t: 0, touch: true}; }
+};
+single.addEventListener('pointerup', ptrEnd); single.addEventListener('pointercancel', ptrEnd);
+function step(d) { const n = S.cur + d; if (n < 0 || n >= S.filtered.length) return; S.zoom = 1; S.panX = S.panY = 0; $('zoom-val').textContent = '100%'; S.cur = n; loadCurrent(); listFocus(n); touchGhosts(); }
+$('btn-prev').onclick = () => step(-1); $('btn-next').onclick = () => step(1);
+$('ghost-prev').onclick = () => step(-1); $('ghost-next').onclick = () => step(1); $('ghost-exit').onclick = () => setFocus(false);
+function touchGhosts() { const on = coarseMQ.matches && S.mode === 'single'; $('ghost-prev').classList.toggle('touch', on && S.cur > 0); $('ghost-next').classList.toggle('touch', on && S.cur < S.filtered.length - 1); }
+single.addEventListener('mousemove', e => {
+  if (!S.focus) return;
+  const r = single.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  $('ghost-prev').classList.toggle('show', x < r.width * .2 && S.cur > 0);
+  $('ghost-next').classList.toggle('show', x > r.width * .8 && S.cur < S.filtered.length - 1);
+  $('ghost-exit').classList.toggle('show', y < r.height * .15);
+});
+single.addEventListener('mouseleave', () => document.querySelectorAll('.ghost').forEach(g => g.classList.remove('show')));
+
+// -------------------------------------------------------------------- focus
+function setFocus(on) {
+  S.focus = on; document.body.classList.toggle('focus', on); $('btn-focus').textContent = on ? 'Exit Focus' : 'Focus';
+  if (!on) document.querySelectorAll('.ghost').forEach(g => g.classList.remove('show'));
+  if (S.mode === 'grid') relayout(true); else renderSingle();
+}
+$('btn-focus').onclick = () => setFocus(!S.focus);
+
+// ----------------------------------------------------------------- keyboard
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.querySelector('.modal.open')) { document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open')); return; }
+    if (S.focus && S.mode === 'single') { exitSingle(true); return; }
+    if (S.focus) { setFocus(false); return; }
+    if (S.mode === 'single') { if (S.view === 'selected' && S.filtered.length === 1) setView('all'); else exitSingle(true); }
+    return;
+  }
+  if (isTyping() || S.mode !== 'single') return;
+  if (e.key === 'ArrowLeft') step(-1);
+  else if (e.key === 'ArrowRight') step(1);
+  else if (e.key === ' ' || e.key.toLowerCase() === 's') { e.preventDefault(); toggle(S.cur); }
+  else if (e.key === '+' || e.key === '=') setZoom(S.zoom + ZSTEP);
+  else if (e.key === '-' || e.key === '_') setZoom(S.zoom - ZSTEP);
+});
+
+loadImages(true).then(poll).catch(e => setInfo('Could not load: ' + e.message));
+})();
+</script>
+</body>
+</html>
