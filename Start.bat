@@ -1,2 +1,3 @@
 @echo off
-start pythonw ImageFlow.pyw
+cd /d "%~dp0"
+start "" pythonw ImageFlow.pyw %*
