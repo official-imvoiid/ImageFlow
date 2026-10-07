@@ -157,10 +157,6 @@ imageflow/
 tests/               pytest suite (GUI tests run under a display, e.g. xvfb-run)
 ```
 
-Run the tests with `python -m pytest tests`.
-
-`COMMITS.txt` lists one `git add` / `git commit` pair per file, ready to paste.
-
 ## License
 
 Apache-2.0 — use, modify, and ship freely.
